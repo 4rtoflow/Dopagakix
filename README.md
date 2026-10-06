@@ -115,6 +115,8 @@ dopagakix render work/script.json           # 音声と映像を作る(Claude AP
 
 特定のセッションは `--session <ID の先頭>`、ログのパスは引数で直接指定できます。
 
+台本を手で書いた場合は、`script.json` の `generator.model` を `"manual"` にしてください。動画内の表記が「手動で作成した台本」になり、「AI 要約」の表示も消えます(`examples/script.example.json` が例です)。
+
 ### API キーなしで描画を試す
 
 ```bash

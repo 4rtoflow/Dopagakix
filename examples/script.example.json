@@ -2,7 +2,7 @@
   "version": 1,
   "generatedAt": "2026-10-01T01:12:00.000Z",
   "generator": {
-    "model": "example (手書きのサンプル)"
+    "model": "manual"
   },
   "facts": {
     "sessionId": "11111111-2222-3333-4444-555555555555",

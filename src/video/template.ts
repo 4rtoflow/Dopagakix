@@ -11,6 +11,8 @@ export interface TemplateInput {
   facts: SessionFacts;
   scenes: TimedScene[];
   credit?: string;
+  /** 台本を書いたモデル。手書きの台本なら undefined */
+  summarizer?: string;
   timeZone?: string;
 }
 
@@ -159,7 +161,13 @@ function decisionsScene(script: VideoScript): string {
   return `${sectionLabel(4, "ご判断ください", true)}<ol class="decisions">${list}</ol>`;
 }
 
-function closingScene(script: VideoScript, facts: SessionFacts, credit: string | undefined, timeZone?: string): string {
+function closingScene(
+  script: VideoScript,
+  facts: SessionFacts,
+  credit: string | undefined,
+  summarizer: string | undefined,
+  timeZone?: string,
+): string {
   const items = script.next_steps.items;
   const next = items.length
     ? `${sectionLabel(5, "次のステップ")}<ul class="next">${items
@@ -167,7 +175,9 @@ function closingScene(script: VideoScript, facts: SessionFacts, credit: string |
         .join("")}</ul>`
     : "";
   const credits = [
-    "要約: Claude による自動生成。正確な内容はセッションログで確認してください",
+    summarizer
+      ? `要約: ${summarizer} による自動生成。正確な内容はセッションログで確認してください`
+      : "要約: 手動で作成した台本",
     credit ? `音声: ${credit}` : undefined,
     `セッション ${facts.sessionId?.slice(0, 8) ?? "-"} · ${formatDateTime(facts.endTime, timeZone) || "-"}`,
   ]
@@ -454,14 +464,14 @@ const PAGE_SCRIPT = String.raw`
 
 /** 動画 1 本分のページを作る。フォントは /fonts/ 以下から読み込む前提。 */
 export function buildHtml(input: TemplateInput): string {
-  const { script, facts, scenes, credit, timeZone } = input;
+  const { script, facts, scenes, credit, summarizer, timeZone } = input;
   const bodies = {
     opening: openingScene(script, facts, timeZone),
     request: requestScene(script, facts),
     work: workScene(script, facts),
     verification: verificationScene(script),
     decisions: decisionsScene(script),
-    closing: closingScene(script, facts, credit, timeZone),
+    closing: closingScene(script, facts, credit, summarizer, timeZone),
   };
   const sections = scenes
     .map((scene) => `<section class="scene" data-kind="${scene.kind}"><div class="content">${bodies[scene.kind]}</div></section>`)
@@ -497,7 +507,7 @@ ${sections}
   <div class="caption-zone"><div id="caption"></div></div>
   <footer class="bottom">
     <span class="where mono">${escapeHtml(where)}</span>
-    <span class="badges"><span class="badge">AI 要約</span>${credit ? `<span class="badge">${escapeHtml(credit)}</span>` : ""}</span>
+    <span class="badges">${summarizer ? '<span class="badge">AI 要約</span>' : ""}${credit ? `<span class="badge">${escapeHtml(credit)}</span>` : ""}</span>
   </footer>
 </div>
 <script id="timeline-data" type="application/json">${data}</script>

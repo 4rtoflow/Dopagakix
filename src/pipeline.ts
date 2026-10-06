@@ -88,6 +88,9 @@ export async function loadScriptFile(file: string): Promise<ScriptFile> {
   return { ...parsed.data, script: normalizeScript(parsed.data.script) };
 }
 
+/** 手書きの台本であることを示す generator.model の値 */
+export const MANUAL_GENERATOR = "manual";
+
 export interface RenderPipelineOptions {
   outFile: string;
   /** narration.wav と timeline.json を置く場所 */
@@ -137,6 +140,7 @@ export async function renderScriptFile(file: ScriptFile, options: RenderPipeline
     facts: file.facts,
     scenes: timeline.scenes,
     credit: timeline.credit,
+    summarizer: file.generator && file.generator.model !== MANUAL_GENERATOR ? file.generator.model : undefined,
     timeZone: options.timeZone,
   });
   const stats = await renderVideo(html, {

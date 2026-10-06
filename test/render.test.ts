@@ -38,6 +38,29 @@ const facts: SessionFacts = {
   models: ["claude-opus-5-5"],
 };
 
+describe("buildHtml", () => {
+  it("要約の作り手に応じてクレジットとバッジを出し分ける", async () => {
+    const script = VideoScriptSchema.parse(JSON.parse(await readFile(path.join(fixtures, "script.json"), "utf8")));
+    const timeline = await buildTimeline(script, new SilentSynthesizer(), { maxSeconds: 120, speed: 1, maxSpeed: 1.3 });
+    const automated = buildHtml({ script, facts, scenes: timeline.scenes, summarizer: "claude-opus-5-5" });
+    expect(automated).toContain("要約: claude-opus-5-5 による自動生成");
+    expect(automated).toContain('<span class="badge">AI 要約</span>');
+    const manual = buildHtml({ script, facts, scenes: timeline.scenes });
+    expect(manual).toContain("要約: 手動で作成した台本");
+    expect(manual).not.toContain("AI 要約");
+  });
+
+  it("台本中の HTML やスクリプト終了タグを無害化する", async () => {
+    const script = VideoScriptSchema.parse(JSON.parse(await readFile(path.join(fixtures, "script.json"), "utf8")));
+    script.title = "<img src=x onerror=alert(1)>";
+    script.opening.narration = ["</script><script>alert(1)</script>"];
+    const timeline = await buildTimeline(script, new SilentSynthesizer(), { maxSeconds: 120, speed: 1, maxSpeed: 1.3 });
+    const html = buildHtml({ script, facts, scenes: timeline.scenes });
+    expect(html).not.toContain("<img src=x");
+    expect(html).not.toContain("</script><script>alert(1)");
+  });
+});
+
 describe("template helpers", () => {
   it("HTML を無害化し、長いパスの先頭を省く", () => {
     expect(escapeHtml(`<a href="x">'&'</a>`)).toBe("&lt;a href=&quot;x&quot;&gt;&#39;&amp;&#39;&lt;/a&gt;");
