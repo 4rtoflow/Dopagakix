@@ -1,0 +1,108 @@
+{
+  "version": 1,
+  "generatedAt": "2026-10-01T01:12:00.000Z",
+  "generator": {
+    "model": "example (手書きのサンプル)"
+  },
+  "facts": {
+    "sessionId": "11111111-2222-3333-4444-555555555555",
+    "title": "ログイン画面のバリデーション修正",
+    "project": "repo",
+    "cwd": "/repo",
+    "branch": "fix/login-validation",
+    "startTime": "2026-10-01T01:00:01.000Z",
+    "endTime": "2026-10-01T01:10:00.000Z",
+    "elapsedMinutes": 10,
+    "userPrompts": 4,
+    "toolCalls": 7,
+    "toolCounts": {
+      "Bash": 3,
+      "Read": 1,
+      "AskUserQuestion": 1,
+      "Edit": 1,
+      "Write": 1
+    },
+    "commandsRun": 3,
+    "commandsFailed": 1,
+    "files": [
+      {
+        "path": "test/login.test.ts",
+        "added": 3,
+        "removed": 0,
+        "edits": 1,
+        "created": true
+      },
+      {
+        "path": "src/login.ts",
+        "added": 1,
+        "removed": 0,
+        "edits": 1,
+        "created": false
+      }
+    ],
+    "models": [
+      "claude-opus-5-5"
+    ]
+  },
+  "script": {
+    "title": "ログイン画面のバリデーション修正",
+    "status": "completed",
+    "headline": "メール形式のチェックを追加し、テストも通過",
+    "opening": {
+      "narration": [
+        "ログイン画面のバリデーション修正が完了しました。"
+      ]
+    },
+    "request": {
+      "summary": "ログイン画面の入力チェックを修正し、テストを追加する",
+      "narration": [
+        "ご依頼は、ログイン画面の入力チェックの修正とテストの追加でした。"
+      ]
+    },
+    "work": {
+      "items": [
+        "メールに @ が無い入力を拒否",
+        "単体テストを2件追加"
+      ],
+      "narration": [
+        "ご回答いただいた簡易チェック方式で、メールアドレスの検証を追加しました。",
+        "あわせて単体テストを2件書いています。"
+      ]
+    },
+    "verification": {
+      "items": [
+        {
+          "label": "単体テスト 2件",
+          "result": "pass"
+        },
+        {
+          "label": "ブラウザでの動作確認",
+          "result": "not_run"
+        }
+      ],
+      "narration": [
+        "テストは一度失敗しましたが、修正後に全て成功しました。",
+        "ブラウザでの確認はまだです。"
+      ]
+    },
+    "decisions": {
+      "items": [
+        {
+          "title": "PR作成のタイミング",
+          "detail": "ご指示どおり未作成です。作成してよいか教えてください"
+        }
+      ],
+      "narration": [
+        "プルリクエストを作成してよいか、ご判断をお願いします。"
+      ]
+    },
+    "next_steps": {
+      "items": [
+        "PRを作成してレビュー依頼"
+      ],
+      "narration": [
+        "ご承認いただければ、すぐにプルリクエストを作成します。"
+      ]
+    }
+  }
+}
