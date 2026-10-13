@@ -4,3 +4,4 @@ coverage/
 dopagakix-out/
 *.tmp.ts
 .DS_Store
+__pycache__/
