@@ -1,5 +1,5 @@
 import type { FileChange, SessionFacts } from "../facts.js";
-import { type CheckResult, STATUS_LABELS, type ScriptStatus, type VideoScript } from "../script/schema.js";
+import { type Author, type CheckResult, STATUS_LABELS, type ScriptStatus, type VideoScript } from "../script/schema.js";
 import { formatDateTime } from "../util/time.js";
 import type { TimedScene } from "./timeline.js";
 
@@ -11,8 +11,8 @@ export interface TemplateInput {
   facts: SessionFacts;
   scenes: TimedScene[];
   credit?: string;
-  /** 台本を書いたモデル。手書きの台本なら undefined */
-  summarizer?: string;
+  /** 台本の書き手。agent なら作業をした AI エージェント自身 */
+  author: Author;
   timeZone?: string;
 }
 
@@ -180,7 +180,7 @@ function closingScene(
   script: VideoScript,
   facts: SessionFacts,
   credit: string | undefined,
-  summarizer: string | undefined,
+  author: Author,
   timeZone?: string,
 ): string {
   const items = script.next_steps.items;
@@ -189,10 +189,12 @@ function closingScene(
         .map((item, i) => `<li ${enter("row", i + 1)}><span class="arrow">→</span><span class="row-text">${escapeHtml(item)}</span></li>`)
         .join("")}</ul>`
     : "";
+  const models = facts.models.length > 0 ? `(${facts.models.join("、")})` : "";
   const credits = [
-    summarizer
-      ? `要約: ${summarizer} による自動生成。正確な内容はセッションログで確認してください`
-      : "要約: 手動で作成した台本",
+    // 自己報告であること(成果を良く見せる偏りがありうること)と、数値の出どころを明記する
+    author === "agent"
+      ? `報告: 作業をした AI エージェント${models}による自己報告。数値はセッションログから自動集計`
+      : "報告: 手動で作成。数値はセッションログから自動集計",
     credit ? `音声: ${credit}` : undefined,
     `セッション ${facts.sessionId?.slice(0, 8) ?? "-"} ・ ${formatDateTime(facts.endTime, timeZone) || "-"}`,
   ]
@@ -437,21 +439,21 @@ const PAGE_SCRIPT = String.raw`
 
 /** 動画 1 本分のページを作る。フォントは /fonts/ 以下から読み込む前提。 */
 export function buildHtml(input: TemplateInput): string {
-  const { script, facts, scenes, credit, summarizer, timeZone } = input;
+  const { script, facts, scenes, credit, author, timeZone } = input;
   const bodies = {
     opening: openingScene(script, facts, timeZone),
     request: requestScene(script, facts),
     work: workScene(script, facts),
     verification: verificationScene(script),
     decisions: decisionsScene(script),
-    closing: closingScene(script, facts, credit, summarizer, timeZone),
+    closing: closingScene(script, facts, credit, author, timeZone),
   };
   const sections = scenes
     .map((scene) => `<section class="scene" data-kind="${scene.kind}"><div class="content">${bodies[scene.kind]}</div></section>`)
     .join("\n");
   const where = [facts.project, facts.branch].filter(Boolean).join(" ・ ");
   const date = formatDateTime(facts.endTime, timeZone).slice(0, 10).replaceAll("/", ".");
-  const labels = [summarizer ? "AI 要約" : undefined, credit].filter(Boolean).map((l) => `<span>${escapeHtml(l!)}</span>`);
+  const labels = [author === "agent" ? "AI 作成" : undefined, credit].filter(Boolean).map((l) => `<span>${escapeHtml(l!)}</span>`);
   const data = JSON.stringify({ scenes: scenes.map(({ kind, start, end, cues }) => ({ kind, start, end, cues })) }).replace(
     /</g,
     "\\u003c",

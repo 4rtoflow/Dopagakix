@@ -1,29 +1,36 @@
-import { readFile, writeFile } from "node:fs/promises";
+import { existsSync } from "node:fs";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { z } from "zod";
 import type { SessionFacts } from "./facts.js";
-import type { Persona } from "./persona.js";
 import { redactSecrets } from "./redact.js";
-import { type Effort, generateScript } from "./script/generate.js";
 import { normalizeScript } from "./script/normalize.js";
-import { type ScriptFile, ScriptFileSchema } from "./script/schema.js";
+import { type Author, type ScriptFile, ScriptFileSchema, type VideoScript, VideoScriptSchema } from "./script/schema.js";
 import { SilentSynthesizer } from "./tts/silent.js";
-import { VoicevoxSynthesizer } from "./tts/voicevox.js";
+import type { Synthesizer } from "./tts/types.js";
+import { VoicevoxConnectionError, VoicevoxSynthesizer } from "./tts/voicevox.js";
 import { encodeWav } from "./tts/wav.js";
-import { buildDigest } from "./transcript/digest.js";
-import { collectFacts } from "./transcript/digest.js";
-import { locateTranscript } from "./transcript/locate.js";
+import { buildDigest, collectFacts } from "./transcript/digest.js";
+import { type LocatedTranscript, type LocateOptions, locateTranscript } from "./transcript/locate.js";
 import { readTranscript } from "./transcript/parse.js";
+import type { ParsedSession } from "./transcript/types.js";
 import { type RenderStats, renderVideo } from "./video/render.js";
 import { buildHtml } from "./video/template.js";
 import { buildTimeline } from "./video/timeline.js";
 
-export interface SessionInput {
-  transcript?: string;
-  session?: string;
-  projectDir: string;
-  maxDigestChars: number;
-  timeZone?: string;
+export interface LoadedSession extends LocatedTranscript {
+  session: ParsedSession;
+  facts: SessionFacts;
+  /** セッション ID(ログに記録がなければファイル名) */
+  sessionId: string;
+}
+
+/** セッションログを探して読み、画面に出す数値を集計する。 */
+export async function loadSession(options: LocateOptions): Promise<LoadedSession> {
+  const located = await locateTranscript(options);
+  const session = await readTranscript(located.file);
+  const sessionId = session.sessionId ?? path.basename(located.file, ".jsonl");
+  return { ...located, session, facts: collectFacts(session), sessionId };
 }
 
 export interface DigestResult {
@@ -36,12 +43,12 @@ export interface DigestResult {
   redactions: number;
 }
 
-/** セッションログを探して読み、LLM に渡すダイジェストを作る(API は呼ばない)。 */
-export async function digestSession(input: SessionInput): Promise<DigestResult> {
-  const file = await locateTranscript(input);
-  const session = await readTranscript(file);
-  const facts = collectFacts(session);
-  const digest = buildDigest(session, facts, { maxChars: input.maxDigestChars, timeZone: input.timeZone });
+/** セッションログを、振り返り用のダイジェスト(時系列の要約)にする。 */
+export async function digestSession(
+  options: LocateOptions & { maxDigestChars: number; timeZone?: string },
+): Promise<DigestResult> {
+  const { file, session, facts } = await loadSession(options);
+  const digest = buildDigest(session, facts, { maxChars: options.maxDigestChars, timeZone: options.timeZone });
   const redacted = redactSecrets(digest.text);
   return {
     file,
@@ -53,66 +60,99 @@ export async function digestSession(input: SessionInput): Promise<DigestResult> 
   };
 }
 
-export interface ScriptOptions {
-  model: string;
-  effort: Effort;
-  seconds: number;
-  fallback: boolean;
-  persona?: Persona;
+export interface LoadedReport {
+  /** 書かれたままの台本(確認に使う) */
+  raw: VideoScript;
+  /** 表示用に整えた台本 */
+  script: VideoScript;
+  author: Author;
+  /** script.json(描画したときの記録)から読んだ場合の事実情報 */
+  facts?: SessionFacts;
+  persona?: { id: string; name: string };
 }
 
-export interface ScriptResult {
-  file: ScriptFile;
-  /** 口調を指定したのに、その文末になっていない読み上げ文 */
-  offStyleLines: string[];
+function formatError(file: string, error: z.ZodError): Error {
+  return new Error(`${file} の形式が正しくありません:\n${z.prettifyError(error)}`);
 }
 
-/** ダイジェストから台本を作り、事実情報とまとめて script.json の形にする。 */
-export async function createScriptFile(digest: DigestResult, options: ScriptOptions): Promise<ScriptResult> {
-  const result = await generateScript(digest.digest, {
-    model: options.model,
-    effort: options.effort,
-    targetSeconds: options.seconds,
-    fallback: options.fallback,
-    persona: options.persona,
-  });
-  const file: ScriptFile = {
-    version: 1,
-    generatedAt: new Date().toISOString(),
-    generator: { model: result.model, inputTokens: result.inputTokens, outputTokens: result.outputTokens },
-    ...(options.persona ? { persona: { id: options.persona.id, name: options.persona.name } } : {}),
-    facts: digest.facts,
-    script: result.script,
-  };
-  return { file, offStyleLines: result.offStyleLines };
-}
-
-export async function loadScriptFile(file: string): Promise<ScriptFile> {
+/**
+ * 台本を読む。エージェントが書いた台本(report.json)と、描画したときに残す script.json の
+ * どちらも受け付ける。後者には事実情報が入っているので、同じ内容で描画し直せる。
+ */
+export async function loadReport(file: string): Promise<LoadedReport> {
   let json: unknown;
   try {
     json = JSON.parse(await readFile(file, "utf8"));
   } catch (error) {
     throw new Error(`${file} を JSON として読めません: ${(error as Error).message}`);
   }
-  const parsed = ScriptFileSchema.safeParse(json);
-  if (!parsed.success) throw new Error(`${file} の形式が正しくありません:\n${z.prettifyError(parsed.error)}`);
-  return { ...parsed.data, script: normalizeScript(parsed.data.script) };
+  if (json !== null && typeof json === "object" && "version" in json) {
+    const parsed = ScriptFileSchema.safeParse(json);
+    if (!parsed.success) throw formatError(file, parsed.error);
+    const { script, author, facts, persona } = parsed.data;
+    return { raw: script, script: normalizeScript(script), author, facts, persona };
+  }
+  const parsed = VideoScriptSchema.safeParse(json);
+  if (!parsed.success) throw formatError(file, parsed.error);
+  return { raw: parsed.data, script: normalizeScript(parsed.data), author: "agent" };
 }
 
-/** 手書きの台本であることを示す generator.model の値 */
-export const MANUAL_GENERATOR = "manual";
-
-export interface RenderPipelineOptions {
-  outFile: string;
-  /** narration.wav と timeline.json を置く場所 */
-  workDir: string;
+export interface SynthesizerOptions {
   voice: boolean;
   speaker: number;
   voicevoxUrl: string;
+  fetch?: typeof fetch;
+}
+
+export interface SynthesizerChoice {
+  synth: Synthesizer;
+  /** 読み上げを付けられず、字幕のみに切り替えた理由 */
+  fallback?: string;
+}
+
+/**
+ * 読み上げに使う合成器を選ぶ。VOICEVOX に接続できないときは、作業を止めないよう
+ * 字幕のみに切り替える(話者 ID の誤りなど、設定の誤りはエラーにする)。
+ */
+export async function createSynthesizer(options: SynthesizerOptions): Promise<SynthesizerChoice> {
+  if (!options.voice) return { synth: new SilentSynthesizer() };
+  try {
+    const synth = await VoicevoxSynthesizer.create({ baseUrl: options.voicevoxUrl, speaker: options.speaker, fetch: options.fetch });
+    return { synth };
+  } catch (error) {
+    if (!(error instanceof VoicevoxConnectionError)) throw error;
+    return {
+      synth: new SilentSynthesizer(),
+      fallback: `VOICEVOX エンジン(${options.voicevoxUrl})に接続できないため、字幕のみで作成します。読み上げを付けるには、エンジンを起動してから描画し直してください。`,
+    };
+  }
+}
+
+/** 出力先を作り、中身を git の管理対象から外す(pytest のキャッシュと同じく、.gitignore に * を書く)。 */
+export async function prepareOutputRoot(dir: string): Promise<void> {
+  await mkdir(dir, { recursive: true });
+  const ignore = path.join(dir, ".gitignore");
+  if (!existsSync(ignore)) await writeFile(ignore, "# dopagakix が作成。動画と作業ファイルを git の管理対象から外す\n*\n");
+}
+
+export interface RenderInput {
+  script: VideoScript;
+  facts: SessionFacts;
+  author: Author;
+  persona?: { id: string; name: string };
+}
+
+export interface RenderPipelineOptions {
+  outFile: string;
+  /** narration.wav・timeline.json・script.json を置く場所 */
+  workDir: string;
+  synth: Synthesizer;
   speed: number;
   maxSpeed: number;
   maxSeconds: number;
   fps: number;
+  /** 1 で 1080x1920。テストでは小さくして時間を短縮する */
+  scale?: number;
   chromiumPath?: string;
   timeZone?: string;
   onSpeechProgress?: (done: number, total: number) => void;
@@ -121,6 +161,8 @@ export interface RenderPipelineOptions {
 
 export interface RenderResult {
   outFile: string;
+  /** 描画に使った台本と事実情報の記録 */
+  scriptFile: string;
   duration: number;
   speed: number;
   credit: string | undefined;
@@ -128,17 +170,24 @@ export interface RenderResult {
 }
 
 /** 台本から音声と映像を作り、mp4 に書き出す。 */
-export async function renderScriptFile(file: ScriptFile, options: RenderPipelineOptions): Promise<RenderResult> {
-  const synth = options.voice
-    ? await VoicevoxSynthesizer.create({ baseUrl: options.voicevoxUrl, speaker: options.speaker })
-    : new SilentSynthesizer();
-  const timeline = await buildTimeline(file.script, synth, {
+export async function renderReport(input: RenderInput, options: RenderPipelineOptions): Promise<RenderResult> {
+  const record: ScriptFile = {
+    version: 1,
+    generatedAt: new Date().toISOString(),
+    author: input.author,
+    ...(input.persona ? { persona: input.persona } : {}),
+    facts: input.facts,
+    script: input.script,
+  };
+  const scriptFile = path.join(options.workDir, "script.json");
+  await writeFile(scriptFile, `${JSON.stringify(record, null, 2)}\n`);
+
+  const timeline = await buildTimeline(input.script, options.synth, {
     maxSeconds: options.maxSeconds,
     speed: options.speed,
     maxSpeed: options.maxSpeed,
     onProgress: options.onSpeechProgress,
   });
-
   const audioFile = path.join(options.workDir, "narration.wav");
   await writeFile(audioFile, encodeWav(timeline.audio));
   await writeFile(
@@ -147,11 +196,11 @@ export async function renderScriptFile(file: ScriptFile, options: RenderPipeline
   );
 
   const html = buildHtml({
-    script: file.script,
-    facts: file.facts,
+    script: input.script,
+    facts: input.facts,
     scenes: timeline.scenes,
     credit: timeline.credit,
-    summarizer: file.generator && file.generator.model !== MANUAL_GENERATOR ? file.generator.model : undefined,
+    author: input.author,
     timeZone: options.timeZone,
   });
   const stats = await renderVideo(html, {
@@ -159,8 +208,16 @@ export async function renderScriptFile(file: ScriptFile, options: RenderPipeline
     audioFile,
     duration: timeline.duration,
     fps: options.fps,
+    scale: options.scale,
     chromiumPath: options.chromiumPath,
     onProgress: options.onFrameProgress,
   });
-  return { outFile: options.outFile, duration: timeline.duration, speed: timeline.speed, credit: timeline.credit, stats };
+  return {
+    outFile: options.outFile,
+    scriptFile,
+    duration: timeline.duration,
+    speed: timeline.speed,
+    credit: timeline.credit,
+    stats,
+  };
 }

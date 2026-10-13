@@ -53,19 +53,39 @@ async function readCwd(file: string): Promise<string | undefined> {
   }
 }
 
+const newestFirst = (list: TranscriptInfo[]) => list.sort((a, b) => b.modified.getTime() - a.modified.getTime());
+
+/**
+ * ログを探すディレクトリの候補。エージェントがサブディレクトリに移動してから実行しても
+ * 見つかるよう、git のルートまで親をたどる(git の外なら指定したディレクトリだけ)。
+ */
+function searchDirs(projectDir: string): string[] {
+  const start = path.resolve(projectDir);
+  const dirs: string[] = [];
+  for (let dir = start; ; dir = path.dirname(dir)) {
+    dirs.push(dir);
+    if (existsSync(path.join(dir, ".git"))) return dirs;
+    if (path.dirname(dir) === dir) return [start];
+  }
+}
+
 /** プロジェクトのセッションログを新しい順に返す。 */
 export async function listTranscripts(projectDir: string): Promise<TranscriptInfo[]> {
-  const target = path.resolve(projectDir);
-  const found = await listJsonl(path.join(projectsRoot(), encodeProjectDir(target)));
-  if (found.length === 0) {
-    // 命名規則が変わった場合に備え、全プロジェクトのログから cwd が一致するものを探す
-    for (const dir of await listProjectDirs()) {
-      for (const info of await listJsonl(dir)) {
-        if ((await readCwd(info.file)) === target) found.push(info);
-      }
+  const dirs = searchDirs(projectDir);
+  for (const dir of dirs) {
+    const found = await listJsonl(path.join(projectsRoot(), encodeProjectDir(dir)));
+    if (found.length > 0) return newestFirst(found);
+  }
+  // 命名規則が変わった場合に備え、全プロジェクトのログから cwd が一致するものを探す
+  const targets = new Set(dirs);
+  const found: TranscriptInfo[] = [];
+  for (const dir of await listProjectDirs()) {
+    for (const info of await listJsonl(dir)) {
+      const cwd = await readCwd(info.file);
+      if (cwd && targets.has(cwd)) found.push(info);
     }
   }
-  return found.sort((a, b) => b.modified.getTime() - a.modified.getTime());
+  return newestFirst(found);
 }
 
 export interface LocateOptions {
@@ -77,29 +97,46 @@ export interface LocateOptions {
   projectDir: string;
 }
 
-export async function locateTranscript(options: LocateOptions): Promise<string> {
+/**
+ * Claude Code が Bash ツールで実行するコマンドに渡す、実行中のセッションの ID
+ * (https://code.claude.com/docs/en/env-vars)。Claude Code の外で実行した場合は無いので、最新のログを使う。
+ */
+export const CURRENT_SESSION_ENV = "CLAUDE_CODE_SESSION_ID";
+
+export interface LocatedTranscript {
+  file: string;
+  /** どの方法で見つけたか(表示用) */
+  how: "path" | "session" | "current" | "latest";
+}
+
+export async function locateTranscript(options: LocateOptions): Promise<LocatedTranscript> {
   if (options.transcript) {
     if (!existsSync(options.transcript)) throw new Error(`ログファイルが見つかりません: ${options.transcript}`);
-    return path.resolve(options.transcript);
+    return { file: path.resolve(options.transcript), how: "path" };
   }
 
   const candidates = await listTranscripts(options.projectDir);
   if (options.session) {
     const id = options.session;
     const local = candidates.find((t) => t.sessionId.startsWith(id));
-    if (local) return local.file;
+    if (local) return { file: local.file, how: "session" };
     for (const dir of await listProjectDirs()) {
       const hit = (await listJsonl(dir)).find((t) => t.sessionId.startsWith(id));
-      if (hit) return hit.file;
+      if (hit) return { file: hit.file, how: "session" };
     }
     throw new Error(`セッション ${id} のログが見つかりません(${projectsRoot()})`);
   }
 
+  // Claude Code のセッションの中で実行された場合は、そのセッションのログを使う
+  const current = process.env[CURRENT_SESSION_ENV];
+  const running = current ? candidates.find((t) => t.sessionId === current) : undefined;
+  if (running) return { file: running.file, how: "current" };
+
   const latest = candidates[0];
   if (!latest) {
     throw new Error(
-      `${path.resolve(options.projectDir)} のセッションログが ${projectsRoot()} に見つかりません。ログのパスを直接指定してください。`,
+      `${path.resolve(options.projectDir)} のセッションログが ${projectsRoot()} に見つかりません。--transcript でログのパスを指定してください。`,
     );
   }
-  return latest.file;
+  return { file: latest.file, how: "latest" };
 }

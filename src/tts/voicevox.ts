@@ -15,6 +15,11 @@ export class VoicevoxError extends Error {
   override name = "VoicevoxError";
 }
 
+/** エンジンに接続できない(起動していない、URL が違う)。字幕のみに切り替える判断に使う。 */
+export class VoicevoxConnectionError extends VoicevoxError {
+  override name = "VoicevoxConnectionError";
+}
+
 /** VOICEVOX ENGINE の HTTP API のうち、本ツールが使う部分。 */
 export class VoicevoxClient {
   constructor(
@@ -27,7 +32,7 @@ export class VoicevoxClient {
     try {
       response = await this.fetchImpl(new URL(path, this.baseUrl), { ...init, signal: AbortSignal.timeout(120_000) });
     } catch (error) {
-      throw new VoicevoxError(
+      throw new VoicevoxConnectionError(
         `VOICEVOX エンジン(${this.baseUrl})に接続できません。エンジンを起動するか、--no-voice を指定してください。`,
         { cause: error },
       );

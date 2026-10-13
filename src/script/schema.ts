@@ -10,8 +10,8 @@ const Narration = z
   .describe("このシーンの読み上げ文。字幕にもそのまま表示する。1要素=1文、1〜3文。");
 
 /**
- * LLM に生成させる動画台本。画面に出す数値(変更ファイル数など)はここに含めず、
- * ログから機械的に集計した SessionFacts を使う。
+ * 動画の台本。作業をしたエージェント自身が書く(report.json)。画面に出す数値
+ * (変更ファイル数など)はここに含めず、ログから機械的に集計した SessionFacts を使う。
  */
 export const VideoScriptSchema = z.object({
   title: z.string().describe("動画タイトル。作業内容を表す名詞句(全角20文字以内)"),
@@ -62,32 +62,22 @@ export type VideoScript = z.infer<typeof VideoScriptSchema>;
 export type ScriptStatus = (typeof STATUS_VALUES)[number];
 export type CheckResult = (typeof CHECK_RESULTS)[number];
 
-/** script.json の形式。手で編集してから render し直せるよう、事実情報と台本をまとめて保存する。 */
+export const AUTHORS = ["agent", "manual"] as const;
+export type Author = (typeof AUTHORS)[number];
+
+/**
+ * script.json の形式。描画に使った台本と事実情報をまとめて残し、同じ内容で描画し直せるようにする。
+ * render は、エージェントが書いた台本(VideoScript)とこの形式のどちらも受け付ける。
+ */
 export const ScriptFileSchema = z.object({
   version: z.literal(1),
   generatedAt: z.string(),
-  generator: z
-    .object({
-      model: z.string(),
-      inputTokens: z.number().optional(),
-      outputTokens: z.number().optional(),
-    })
-    .optional(),
-  /** 読み上げ文を書かせたときのキャラクター口調(記録用) */
+  /** 台本の書き手。agent=作業をした AI エージェント自身、manual=人が手で書いたもの */
+  author: z.enum(AUTHORS).default("agent"),
+  /** 読み上げ文の口調(確認に使ったもの。記録用) */
   persona: z.object({ id: z.string(), name: z.string() }).optional(),
   facts: SessionFactsSchema,
   script: VideoScriptSchema,
 });
 
 export type ScriptFile = z.infer<typeof ScriptFileSchema>;
-
-/**
- * Claude API の structured outputs に渡す JSON Schema。
- * SDK の zod ヘルパーは文字列の enum を説明文に移してしまう(0.131 時点)ため、
- * zod 標準の変換結果をそのまま使い、enum を API 側で強制させる。
- */
-export function scriptJsonSchema(): Record<string, unknown> {
-  const schema = z.toJSONSchema(VideoScriptSchema, { target: "draft-2020-12" }) as Record<string, unknown>;
-  delete schema.$schema;
-  return schema;
-}
