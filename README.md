@@ -61,7 +61,7 @@ npm install -g github:4rtoflow/Dopagakix
 npx playwright-core install --only-shell chromium   # Chromium が無ければ
 ```
 
-GitHub から入れると、npm が依存関係を入れたうえで `prepare` スクリプト(ビルド)を実行してから導入します([npm install のドキュメント](https://docs.npmjs.com/cli/v11/commands/npm-install))。
+ビルド済みのファイル(`dist/`)をリポジトリに含めているため、導入時にビルドは行いません(理由は「開発」を参照)。
 
 VOICEVOX ENGINE は公式の Docker イメージで起動できます。
 
@@ -201,11 +201,14 @@ dopagakix render "$(npm root -g)/dopagakix/examples/script.example.json" --no-vo
 ```bash
 git clone https://github.com/4rtoflow/Dopagakix.git
 cd Dopagakix
-npm install          # prepare スクリプトでビルドも行う
+npm install
+npm run compile      # src/ を dist/ にビルドする
 npm test             # テスト(Chromium・ffmpeg・VOICEVOX があれば結合テストも実行)
 npm run typecheck    # 型検査
 npm link             # 開発中の版を dopagakix コマンドとして使う
 ```
+
+**`src/` を変更したら、`npm run compile` を実行して `dist/` もコミットしてください。** `npm install -g github:…` で導入できるよう、ビルド済みの `dist/` をリポジトリに含めています。ビルドを `prepare` スクリプトで行う方式は、npm がグローバル導入の際に依存関係をパッケージ内に入れずにビルドしようとして失敗したため、採用していません(npm 10.9.4 と 11.21.0 で確認)。同じ理由で、npm が git から入れるときに準備処理の対象とするスクリプト名(`build`・`prepare`・`prepack` など)は使わず、ビルドは `compile` という名前にしています。`dist/` がソースと一致しているかは `npm test` で確かめます。
 
 このリポジトリ自体にも `.claude/skills/video-report/` があるため、ここで Claude Code を使えばスキルを試せます。
 
@@ -222,6 +225,7 @@ src/
 ├── script/                台本のスキーマ・整形・確認(check)
 ├── tts/                   VOICEVOX・無音合成・WAV 処理
 └── video/                 タイムライン・HTML テンプレート・描画
+dist/                      ビルド済みの CLI(npm run compile で更新し、コミットする)
 .claude/skills/video-report/  エージェント用のスキル(npm パッケージにも同梱)
 .claude/skills/ui-ux-pro-max/ UI/UX Pro Max スキル(npm ui-ux-pro-max-cli 2.15.0、MIT。デザインの検討用)
 test/                      vitest のテストと合成フィクスチャ
