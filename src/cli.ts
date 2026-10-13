@@ -3,6 +3,7 @@ import { mkdir, writeFile } from "node:fs/promises";
 import { createRequire } from "node:module";
 import path from "node:path";
 import { Command, InvalidArgumentError, Option } from "commander";
+import { type Persona, personaMismatch, resolvePersona } from "./persona.js";
 import {
   createScriptFile,
   type DigestResult,
@@ -24,7 +25,8 @@ const { version } = createRequire(import.meta.url)("../package.json") as { versi
 
 /** 長さがこの倍率を超えたら話速を上げる */
 const LENGTH_TOLERANCE = 1.25;
-const MAX_SPEED = 1.35;
+const DEFAULT_SPEED = 1.25;
+const MAX_SPEED = 1.45;
 
 function positiveNumber(value: string): number {
   const n = Number(value);
@@ -56,6 +58,7 @@ interface ScriptFlags {
   effort: Effort;
   seconds: number;
   fallback: boolean;
+  persona: string;
 }
 
 interface RenderFlags {
@@ -81,7 +84,8 @@ function withScriptOptions(command: Command): Command {
     .option("--model <id>", "台本を作る Claude のモデル", DEFAULT_MODEL)
     .addOption(new Option("--effort <level>", "Claude の推論の深さ").choices(EFFORT_LEVELS).default(DEFAULT_EFFORT))
     .option("--seconds <n>", "動画の長さの目安(秒)", positiveNumber, 60)
-    .option("--no-fallback", "安全分類器による拒否時に、別モデルへ切り替えて再実行する機能を使わない");
+    .option("--no-fallback", "安全分類器による拒否時に、別モデルへ切り替えて再実行する機能を使わない")
+    .option("--persona <name>", "読み上げ文の口調。auto=話者から判断 / none=丁寧語 / zundamon / 口調設定の JSON ファイル", "auto");
 }
 
 function withRenderOptions(command: Command): Command {
@@ -89,7 +93,7 @@ function withRenderOptions(command: Command): Command {
     .option("--no-voice", "読み上げなし(字幕のみ)で作る。VOICEVOX は不要")
     .option("--speaker <id>", "VOICEVOX の話者(スタイル)ID。`dopagakix speakers` で一覧", nonNegativeInteger, DEFAULT_SPEAKER)
     .option("--voicevox-url <url>", "VOICEVOX エンジンの URL", process.env.VOICEVOX_URL ?? DEFAULT_VOICEVOX_URL)
-    .option("--speed <x>", "話速(1 が標準)", positiveNumber, 1.15)
+    .option("--speed <x>", "話速(1 が標準)", positiveNumber, DEFAULT_SPEED)
     .option("--fps <n>", "フレームレート", positiveInteger, 30)
     .option("--chromium <path>", "描画に使う Chromium の実行ファイル(環境変数 DOPAGAKIX_CHROMIUM でも可)");
 }
@@ -113,14 +117,33 @@ async function runDigest(transcript: string | undefined, flags: SessionFlags): P
   return result;
 }
 
-async function runScript(digest: DigestResult, flags: ScriptFlags): Promise<ScriptFile> {
+async function choosePersona(
+  flags: ScriptFlags,
+  speaker: { id: number; voice: boolean; voicevoxUrl: string },
+): Promise<Persona | undefined> {
+  const persona = await resolvePersona({
+    option: flags.persona,
+    speaker: speaker.id,
+    voice: speaker.voice,
+    voicevoxUrl: speaker.voicevoxUrl,
+  });
+  const auto = flags.persona === "auto" ? `(話者 ID ${speaker.id} から自動で選択。--persona none で無効)` : "";
+  log(persona ? `  口調: ${persona.name}${auto}` : "  口調: なし(丁寧語)");
+  return persona;
+}
+
+async function runScript(digest: DigestResult, flags: ScriptFlags, persona: Persona | undefined): Promise<ScriptFile> {
   log(`  ダイジェスト(${digest.digest.length.toLocaleString()} 文字)を Claude API(${flags.model})に送信します`);
-  const file = await createScriptFile(digest, flags);
+  const { file, offStyleLines } = await createScriptFile(digest, { ...flags, persona });
   log(
     `  台本: 「${file.script.title}」(${STATUS_LABELS[file.script.status]})` +
       ` / 入力 ${file.generator?.inputTokens?.toLocaleString()}・出力 ${file.generator?.outputTokens?.toLocaleString()} トークン` +
       (file.generator?.model !== flags.model ? ` / 応答モデル ${file.generator?.model}` : ""),
   );
+  if (persona && offStyleLines.length > 0) {
+    log(`  注意: ${persona.name}の口調になっていない読み上げ文が ${offStyleLines.length} 件あります(script.json で直せます)`);
+    for (const line of offStyleLines) log(`    - ${line}`);
+  }
   return file;
 }
 
@@ -143,6 +166,8 @@ function renderOptions(
 }
 
 async function runRender(file: ScriptFile, options: RenderPipelineOptions): Promise<void> {
+  const mismatch = options.voice ? personaMismatch(file.persona, options.speaker) : undefined;
+  if (mismatch) log(`  注意: ${mismatch}`);
   const result = await renderScriptFile(file, options);
   log(
     `完了: ${result.outFile}(${result.duration.toFixed(1)} 秒、話速 ${result.speed}` +
@@ -179,7 +204,8 @@ withRenderOptions(
     await writeFile(path.join(runDir, "digest.md"), digest.digest);
 
     log("[2/3] 台本を作成しています");
-    const file = await runScript(digest, flags);
+    const persona = await choosePersona(flags, { id: flags.speaker, voice: flags.voice, voicevoxUrl: flags.voicevoxUrl });
+    const file = await runScript(digest, flags, persona);
     await writeFile(path.join(runDir, "script.json"), `${JSON.stringify(file, null, 2)}\n`);
 
     log("[3/3] 音声と映像を作成しています");
@@ -203,11 +229,16 @@ withSessionOptions(program.command("digest").description("Claude に渡すダイ
     }
   });
 
+type ScriptCommandFlags = SessionFlags & ScriptFlags & { out: string; speaker: number; voicevoxUrl: string };
+
 withScriptOptions(withSessionOptions(program.command("script").description("台本(script.json)までを作る")))
   .option("-o, --out <file>", "script.json の書き出し先", "script.json")
-  .action(async (transcript: string | undefined, flags: SessionFlags & ScriptFlags & { out: string }) => {
+  .option("--speaker <id>", "読み上げに使う予定の VOICEVOX の話者 ID(口調の自動選択に使う)", nonNegativeInteger, DEFAULT_SPEAKER)
+  .option("--voicevox-url <url>", "話者名の確認に使う VOICEVOX エンジンの URL", process.env.VOICEVOX_URL ?? DEFAULT_VOICEVOX_URL)
+  .action(async (transcript: string | undefined, flags: ScriptCommandFlags) => {
     const digest = await runDigest(transcript, flags);
-    const file = await runScript(digest, flags);
+    const persona = await choosePersona(flags, { id: flags.speaker, voice: true, voicevoxUrl: flags.voicevoxUrl });
+    const file = await runScript(digest, flags, persona);
     await mkdir(path.dirname(path.resolve(flags.out)), { recursive: true });
     await writeFile(flags.out, `${JSON.stringify(file, null, 2)}\n`);
     log(`書き出しました: ${path.resolve(flags.out)}(編集してから render できます)`);

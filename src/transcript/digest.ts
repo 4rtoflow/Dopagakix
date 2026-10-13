@@ -27,6 +27,23 @@ const QUIET_RESULT_TOOLS = new Set([
 
 export const DEFAULT_MAX_DIGEST_CHARS = 120_000;
 
+/** これより長く何も起きていない間隔は、放置していた時間とみなす */
+const IDLE_GAP_MS = 15 * 60_000;
+
+function activeMinutes(session: ParsedSession): number | undefined {
+  const times = session.events
+    .map((e) => (e.time ? Date.parse(e.time) : Number.NaN))
+    .filter((t) => Number.isFinite(t))
+    .sort((a, b) => a - b);
+  if (times.length === 0) return undefined;
+  let active = 0;
+  for (let i = 1; i < times.length; i++) {
+    const gap = times[i]! - times[i - 1]!;
+    if (gap <= IDLE_GAP_MS) active += gap;
+  }
+  return Math.round(active / 60_000);
+}
+
 export function clip(text: string, max: number): string {
   if (max <= 0) return "";
   if (text.length <= max) return text;
@@ -146,6 +163,7 @@ export function collectFacts(session: ParsedSession): SessionFacts {
     startTime,
     endTime,
     elapsedMinutes,
+    activeMinutes: activeMinutes(session),
     userPrompts,
     toolCalls,
     toolCounts,
@@ -295,7 +313,7 @@ function renderHeader(facts: SessionFacts, timeZone?: string): string {
   });
   if (facts.files.length > shownFiles.length) shownFiles.push(`  - ほか ${facts.files.length - shownFiles.length} 件`);
   const period = facts.startTime
-    ? `${formatDateTime(facts.startTime, timeZone)} 〜 ${formatDateTime(facts.endTime, timeZone)}(${zoneLabel(timeZone)}、経過 ${facts.elapsedMinutes ?? "?"} 分)`
+    ? `${formatDateTime(facts.startTime, timeZone)} 〜 ${formatDateTime(facts.endTime, timeZone)}(${zoneLabel(timeZone)}、経過 ${facts.elapsedMinutes ?? "?"} 分、うち作業時間の推定 ${facts.activeMinutes ?? "?"} 分)`
     : "不明";
 
   return [

@@ -4,6 +4,7 @@ import { describe, expect, it } from "vitest";
 import { redactSecrets } from "../src/redact.js";
 import { buildDigest, clip, collectFacts } from "../src/transcript/digest.js";
 import { cleanUserText, readTranscript } from "../src/transcript/parse.js";
+import type { ParsedSession } from "../src/transcript/types.js";
 
 const fixture = path.join(path.dirname(fileURLToPath(import.meta.url)), "fixtures", "session.jsonl");
 
@@ -72,8 +73,30 @@ describe("collectFacts", () => {
     expect(facts.commandsFailed).toBe(1);
     expect(facts.userPrompts).toBe(4);
     expect(facts.elapsedMinutes).toBe(10);
+    expect(facts.activeMinutes).toBe(10);
     expect(facts.project).toBe("repo");
     expect(facts.toolCounts).toMatchObject({ Bash: 3, Edit: 1, Write: 1, Read: 1, AskUserQuestion: 1 });
+  });
+});
+
+describe("activeMinutes", () => {
+  it("15 分を超える間隔(放置)は作業時間に含めない", () => {
+    const session: ParsedSession = {
+      file: "x",
+      models: [],
+      skippedLines: 0,
+      startTime: "2026-10-06T08:00:00.000Z",
+      endTime: "2026-10-13T08:10:00.000Z",
+      events: [
+        { kind: "user_prompt", time: "2026-10-06T08:00:00.000Z", text: "a" },
+        { kind: "assistant_text", time: "2026-10-06T08:05:00.000Z", text: "b" },
+        { kind: "user_prompt", time: "2026-10-13T08:00:00.000Z", text: "c" },
+        { kind: "assistant_text", time: "2026-10-13T08:10:00.000Z", text: "d" },
+      ],
+    };
+    const facts = collectFacts(session);
+    expect(facts.elapsedMinutes).toBe(7 * 24 * 60 + 10);
+    expect(facts.activeMinutes).toBe(15);
   });
 });
 

@@ -44,10 +44,22 @@ describe("buildHtml", () => {
     const timeline = await buildTimeline(script, new SilentSynthesizer(), { maxSeconds: 120, speed: 1, maxSpeed: 1.3 });
     const automated = buildHtml({ script, facts, scenes: timeline.scenes, summarizer: "claude-opus-5-5" });
     expect(automated).toContain("要約: claude-opus-5-5 による自動生成");
-    expect(automated).toContain('<span class="badge">AI 要約</span>');
+    expect(automated).toContain("<span>AI 要約</span>");
     const manual = buildHtml({ script, facts, scenes: timeline.scenes });
     expect(manual).toContain("要約: 手動で作成した台本");
     expect(manual).not.toContain("AI 要約");
+  });
+
+  it("作業時間の推定があればそれを出し、日をまたぐ期間は月日も表示する", async () => {
+    const script = VideoScriptSchema.parse(JSON.parse(await readFile(path.join(fixtures, "script.json"), "utf8")));
+    const timeline = await buildTimeline(script, new SilentSynthesizer(), { maxSeconds: 120, speed: 1, maxSpeed: 1.3 });
+    const multiDay = { ...facts, endTime: "2026-10-08T03:30:00.000Z", elapsedMinutes: 2 * 24 * 60 + 150, activeMinutes: 95 };
+    const html = buildHtml({ script, facts: multiDay, scenes: timeline.scenes, timeZone: "UTC" });
+    expect(html).toContain("2026/10/01 01:00 – 10/08 03:30");
+    expect(html).toContain('<div class="fact-label">作業時間</div><div class="num">1.6<small>時間</small>');
+    const sameDay = buildHtml({ script, facts, scenes: timeline.scenes, timeZone: "UTC" });
+    expect(sameDay).toContain("2026/10/01 01:00 – 01:42");
+    expect(sameDay).toContain('<div class="fact-label">経過</div>');
   });
 
   it("台本中の HTML やスクリプト終了タグを無害化する", async () => {

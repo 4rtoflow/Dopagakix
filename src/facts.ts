@@ -20,7 +20,10 @@ export const SessionFactsSchema = z.object({
   branch: z.string().optional(),
   startTime: z.string().optional(),
   endTime: z.string().optional(),
+  /** 開始から終了までの時間(放置していた時間も含む) */
   elapsedMinutes: z.number().optional(),
+  /** 作業時間の推定。15 分を超える間隔(放置)を除いて合計したもの */
+  activeMinutes: z.number().optional(),
   userPrompts: z.number(),
   toolCalls: z.number(),
   toolCounts: z.record(z.string(), z.number()),

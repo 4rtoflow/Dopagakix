@@ -13,6 +13,7 @@
     "startTime": "2026-10-01T01:00:01.000Z",
     "endTime": "2026-10-01T01:10:00.000Z",
     "elapsedMinutes": 10,
+    "activeMinutes": 10,
     "userPrompts": 4,
     "toolCalls": 7,
     "toolCounts": {

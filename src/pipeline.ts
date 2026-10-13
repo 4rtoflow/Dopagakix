@@ -2,6 +2,7 @@ import { readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { z } from "zod";
 import type { SessionFacts } from "./facts.js";
+import type { Persona } from "./persona.js";
 import { redactSecrets } from "./redact.js";
 import { type Effort, generateScript } from "./script/generate.js";
 import { normalizeScript } from "./script/normalize.js";
@@ -57,23 +58,33 @@ export interface ScriptOptions {
   effort: Effort;
   seconds: number;
   fallback: boolean;
+  persona?: Persona;
+}
+
+export interface ScriptResult {
+  file: ScriptFile;
+  /** 口調を指定したのに、その文末になっていない読み上げ文 */
+  offStyleLines: string[];
 }
 
 /** ダイジェストから台本を作り、事実情報とまとめて script.json の形にする。 */
-export async function createScriptFile(digest: DigestResult, options: ScriptOptions): Promise<ScriptFile> {
+export async function createScriptFile(digest: DigestResult, options: ScriptOptions): Promise<ScriptResult> {
   const result = await generateScript(digest.digest, {
     model: options.model,
     effort: options.effort,
     targetSeconds: options.seconds,
     fallback: options.fallback,
+    persona: options.persona,
   });
-  return {
+  const file: ScriptFile = {
     version: 1,
     generatedAt: new Date().toISOString(),
     generator: { model: result.model, inputTokens: result.inputTokens, outputTokens: result.outputTokens },
+    ...(options.persona ? { persona: { id: options.persona.id, name: options.persona.name } } : {}),
     facts: digest.facts,
     script: result.script,
   };
+  return { file, offStyleLines: result.offStyleLines };
 }
 
 export async function loadScriptFile(file: string): Promise<ScriptFile> {

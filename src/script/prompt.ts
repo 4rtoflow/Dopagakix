@@ -1,12 +1,28 @@
+import type { Persona } from "../persona.js";
+
 /**
- * 読み上げ文の文字数の目安。VOICEVOX(話速 1.15)の実測でおよそ 6.5 文字/秒。
- * シーン切り替えや文間の間(合計 8 秒程度)を除いた時間に収まるよう、やや少なめに見積もる。
+ * 読み上げ文の文字数の目安。VOICEVOX ずんだもんの実測で、話速 1.15 で約 6.7 文字/秒、
+ * 1.25 で約 7.3 文字/秒。シーン切り替えや文間の間(合計 8 秒程度)を除いた時間に収まるよう、
+ * 少なめ(6 文字/秒)に見積もる。
  */
 export function narrationBudget(targetSeconds: number): number {
   return Math.max(120, Math.round((targetSeconds - 8) * 6));
 }
 
-export function buildSystemPrompt(targetSeconds: number): string {
+function voiceSection(persona: Persona | undefined): string {
+  if (!persona) return "- narration は、指示者に直接報告する丁寧語(です・ます)で書きます。";
+  const examples = persona.examples.map((e) => `「${e}」`).join("");
+  return [
+    `- narration は「${persona.name}」が読み上げます。${persona.name}の口調で書いてください: ${persona.style}`,
+    examples ? `  - 口調の例: ${examples}` : undefined,
+    "  - 口調を変えるのは narration だけです。title、headline、items などの画面の文字は中立な書き方のままにします。",
+    "  - 口調に合わせて事実を変えたり、誇張したりしないでください。",
+  ]
+    .filter(Boolean)
+    .join("\n");
+}
+
+export function buildSystemPrompt(targetSeconds: number, persona?: Persona): string {
   const chars = narrationBudget(targetSeconds);
   return `あなたは、AI コーディングエージェントの作業セッションを、作業を指示した人(以下「指示者」)向けの縦型動画レポートの台本にまとめる編集者です。
 
@@ -26,7 +42,7 @@ export function buildSystemPrompt(targetSeconds: number): string {
 - 秘密情報(API キー、パスワード、個人情報など)は台本に含めないでください。
 
 ## 台本の書き方
-- 指示者に直接報告する丁寧語(です・ます)で書きます。
+${voiceSection(persona)}
 - 画面に出る短い文字(title、headline、items など)は、体言止めや短い句で簡潔にします。
 - narration は読み上げと字幕を兼ねます。
   - 1 要素につき 1 文、全角 35 文字以内。各シーン 1〜3 文。

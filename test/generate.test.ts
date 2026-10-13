@@ -2,6 +2,7 @@ import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
+import { ZUNDAMON } from "../src/persona.js";
 import { generateScript, type ScriptClient, ScriptGenerationError } from "../src/script/generate.js";
 import { narrationBudget } from "../src/script/prompt.js";
 import { scriptJsonSchema } from "../src/script/schema.js";
@@ -76,6 +77,26 @@ describe("generateScript", () => {
 
     const invalid = fakeClient({ stop_reason: "end_turn", content: [{ type: "text", text: '{"title":"x"}' }] });
     await expect(generateScript("x", { targetSeconds: 60, client: invalid.client })).rejects.toThrow(/スキーマ/);
+  });
+
+  it("口調を指定すると読み上げ文だけをその口調で書かせ、外れた文を報告する", async () => {
+    const { client, requests } = fakeClient({
+      stop_reason: "end_turn",
+      content: [{ type: "text", text: await sampleScriptText() }],
+    });
+    const result = await generateScript("x", { targetSeconds: 60, client, persona: ZUNDAMON });
+    const system = String(requests[0]!.system);
+    expect(system).toContain("narration は「ずんだもん」が読み上げます");
+    expect(system).toContain("「ログイン画面の修正が終わったのだ。」");
+    expect(system).toContain("口調を変えるのは narration だけです");
+    expect(system).not.toContain("丁寧語(です・ます)");
+    // フィクスチャはです・ます調なので、全文が口調から外れていると報告される
+    expect(result.offStyleLines).toContain("ログイン画面のバリデーション修正が完了しました。");
+
+    const plain = fakeClient({ stop_reason: "end_turn", content: [{ type: "text", text: await sampleScriptText() }] });
+    const neutral = await generateScript("x", { targetSeconds: 60, client: plain.client });
+    expect(String(plain.requests[0]!.system)).toContain("丁寧語(です・ます)");
+    expect(neutral.offStyleLines).toEqual([]);
   });
 
   it("台本中の秘匿情報を伏せ字にし、件数上限で切り詰める", async () => {

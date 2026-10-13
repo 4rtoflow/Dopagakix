@@ -20,7 +20,8 @@ declare global {
 function fontDirectories(): Record<string, string> {
   const require = createRequire(import.meta.url);
   return {
-    noto: path.dirname(require.resolve("@fontsource-variable/noto-sans-jp/package.json")),
+    serif: path.dirname(require.resolve("@fontsource-variable/noto-serif-jp/package.json")),
+    gothic: path.dirname(require.resolve("@fontsource/zen-kaku-gothic-new/package.json")),
     mono: path.dirname(require.resolve("@fontsource-variable/jetbrains-mono/package.json")),
   };
 }
@@ -97,7 +98,7 @@ export async function renderVideo(html: string, options: RenderOptions): Promise
       if (url.pathname === "/index.html") {
         return route.fulfill({ body: html, contentType: "text/html; charset=utf-8" });
       }
-      const match = /^\/fonts\/(noto|mono)\/(.+)$/.exec(url.pathname);
+      const match = /^\/fonts\/(serif|gothic|mono)\/(.+)$/.exec(url.pathname);
       const root = match ? fonts[match[1]!] : undefined;
       if (match && root) {
         const file = path.resolve(root, decodeURIComponent(match[2]!));

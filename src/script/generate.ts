@@ -1,4 +1,5 @@
 import Anthropic from "@anthropic-ai/sdk";
+import { checkEndings, type Persona } from "../persona.js";
 import { normalizeScript } from "./normalize.js";
 import { buildSystemPrompt, buildUserMessage } from "./prompt.js";
 import { scriptJsonSchema, type VideoScript, VideoScriptSchema } from "./schema.js";
@@ -24,6 +25,8 @@ export interface GenerateOptions {
   targetSeconds: number;
   /** 安全分類器による拒否時に、API 側で別モデルへ切り替えて再実行させる */
   fallback?: boolean;
+  /** 読み上げ役の口調。指定すると narration をその口調で書かせる */
+  persona?: Persona;
   client?: ScriptClient;
 }
 
@@ -33,6 +36,8 @@ export interface GenerateResult {
   model: string;
   inputTokens: number;
   outputTokens: number;
+  /** 口調を指定したのに、その文末になっていない読み上げ文 */
+  offStyleLines: string[];
 }
 
 export class ScriptGenerationError extends Error {
@@ -89,7 +94,7 @@ export async function generateScript(digest: string, options: GenerateOptions): 
         ...(supportsEffort ? { effort: options.effort ?? DEFAULT_EFFORT } : {}),
         format: { type: "json_schema", schema: scriptJsonSchema() },
       },
-      system: buildSystemPrompt(options.targetSeconds),
+      system: buildSystemPrompt(options.targetSeconds, options.persona),
       messages: [{ role: "user", content: buildUserMessage(digest) }],
     });
     message = await stream.finalMessage();
@@ -117,10 +122,20 @@ export async function generateScript(digest: string, options: GenerateOptions): 
     throw new ScriptGenerationError(`台本がスキーマに合いません: ${parsed.error.message}`);
   }
 
+  const script = normalizeScript(parsed.data);
+  const narration = [
+    script.opening,
+    script.request,
+    script.work,
+    script.verification,
+    script.decisions,
+    script.next_steps,
+  ].flatMap((scene) => scene.narration);
   return {
-    script: normalizeScript(parsed.data),
+    script,
     model: message.model,
     inputTokens: message.usage.input_tokens,
     outputTokens: message.usage.output_tokens,
+    offStyleLines: options.persona ? checkEndings(narration, options.persona).misses : [],
   };
 }

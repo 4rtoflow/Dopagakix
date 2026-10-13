@@ -38,7 +38,8 @@ export interface TimelineOptions {
 
 /** シーン開始から最初の読み上げまで。要素の登場アニメーションを見せる時間。 */
 const LEAD_IN = 0.5;
-const LINE_GAP = 0.25;
+/** 文と文の間。0.25 秒では間延びしたため詰めている */
+const LINE_GAP = 0.15;
 const TAIL = 0.6;
 /** 最後のシーンはクレジットを読めるよう長めに残す */
 const CLOSING_TAIL = 2.0;

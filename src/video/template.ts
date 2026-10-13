@@ -16,26 +16,25 @@ export interface TemplateInput {
   timeZone?: string;
 }
 
-const ICONS = {
-  check: '<svg viewBox="0 0 24 24"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg>',
-  cross: '<svg viewBox="0 0 24 24"><path d="M6.5 6.5l11 11M17.5 6.5l-11 11"/></svg>',
-  dash: '<svg viewBox="0 0 24 24"><path d="M6 12h12"/></svg>',
-  pause: '<svg viewBox="0 0 24 24"><path d="M9 6.5v11M15 6.5v11"/></svg>',
-  half: '<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="7.5"/><path d="M12 4.5a7.5 7.5 0 0 1 0 15z" class="fill"/></svg>',
-  arrow: '<svg viewBox="0 0 24 24"><path d="M5 12h13M13 6.5l5.5 5.5-5.5 5.5"/></svg>',
-} as const;
+/*
+ * デザインの方針は docs/design.md を参照。
+ * 「AI が作った UI」に見えやすい要素(暗色＋光彩、格子背景、紫系の色、カードの羅列、
+ * 見出し上のラベルやバッジ、側面の色帯など)を避け、紙の報告書の作法
+ * (罫線、明朝の見出し、○×△、文末の「以上」)で組む。
+ */
 
-const STATUS: Record<ScriptStatus, { label: string; color: string; icon: string }> = {
-  completed: { label: STATUS_LABELS.completed, color: "#34d399", icon: ICONS.check },
-  partial: { label: STATUS_LABELS.partial, color: "#fbbf24", icon: ICONS.half },
-  blocked: { label: STATUS_LABELS.blocked, color: "#fb923c", icon: ICONS.pause },
-  failed: { label: STATUS_LABELS.failed, color: "#f87171", icon: ICONS.cross },
+/** 状態ごとの色は彩度を抑えた「インク」の色にする */
+const STATUS: Record<ScriptStatus, { label: string; color: string; mark: string }> = {
+  completed: { label: STATUS_LABELS.completed, color: "#1e7a4c", mark: "○" },
+  partial: { label: STATUS_LABELS.partial, color: "#9a6200", mark: "△" },
+  blocked: { label: STATUS_LABELS.blocked, color: "#c2410c", mark: "!" },
+  failed: { label: STATUS_LABELS.failed, color: "#b42318", mark: "×" },
 };
 
-const CHECK: Record<CheckResult, { label: string; icon: string }> = {
-  pass: { label: "成功", icon: ICONS.check },
-  fail: { label: "失敗", icon: ICONS.cross },
-  not_run: { label: "未実施", icon: ICONS.dash },
+const CHECK: Record<CheckResult, { label: string; mark: string }> = {
+  pass: { label: "成功", mark: "○" },
+  fail: { label: "失敗", mark: "×" },
+  not_run: { label: "未実施", mark: "−" },
 };
 
 export function escapeHtml(text: string): string {
@@ -59,47 +58,59 @@ function formatElapsed(minutes: number | undefined): { value: string; unit: stri
 }
 
 const number = (n: number) => n.toLocaleString("ja-JP");
-/** 統計の大きな数は桁を丸めて枠に収める */
+/** 大きな数は桁を丸めて枠に収める */
 const compact = (n: number) =>
   n >= 100_000 ? `${Math.round(n / 1000)}k` : n >= 10_000 ? `${(n / 1000).toFixed(1)}k` : number(n);
 /** 増減の表示。0 は色を付けない */
-const delta = (sign: "+" | "−", n: number, format = number, extra = "") =>
-  `<span class="${sign === "+" ? "plus" : "minus"}${n === 0 ? " zero" : ""}${extra}">${sign}${format(n)}</span>`;
+const delta = (sign: "+" | "−", n: number, format = number) =>
+  `<span class="${sign === "+" ? "plus" : "minus"}${n === 0 ? " zero" : ""}">${sign}${format(n)}</span>`;
 
 /** 要素の登場順(アニメーションの遅延)を付ける */
-const enter = (i: number) => `class="enter" style="--i:${i}"`;
-const enterWith = (cls: string, i: number) => `class="enter ${cls}" style="--i:${i}"`;
+const enter = (cls: string, i: number) => `class="enter ${cls}" style="--i:${i}"`;
 
-function sectionLabel(no: number, text: string, attention = false): string {
-  return `<div ${enterWith(`section-label${attention ? " attention" : ""}`, 0)}><span class="no">${String(no).padStart(2, "0")}</span>${escapeHtml(text)}</div>`;
+/** 新聞の欄見出しのように、罫線の下に見出しを置く */
+function sectionHead(text: string, attention = false): string {
+  return `<div class="section${attention ? " attention" : ""}"><div class="rule rule-in"></div><h2 ${enter("section-title", 0)}>${escapeHtml(text)}</h2></div>`;
 }
 
 function openingScene(script: VideoScript, facts: SessionFacts, timeZone?: string): string {
   const status = STATUS[script.status];
   const added = facts.files.reduce((n, f) => n + f.added, 0);
   const removed = facts.files.reduce((n, f) => n + f.removed, 0);
-  const elapsed = formatElapsed(facts.elapsedMinutes);
-  const period = facts.startTime
-    ? `${formatDateTime(facts.startTime, timeZone)} – ${formatDateTime(facts.endTime, timeZone).slice(-5)}`
-    : "";
+  // 放置期間を含む経過時間は誤解を招くので、作業時間の推定があればそちらを出す
+  const duration = formatElapsed(facts.activeMinutes ?? facts.elapsedMinutes);
+  const durationLabel = facts.activeMinutes !== undefined ? "作業時間" : "経過";
+  const start = formatDateTime(facts.startTime, timeZone);
+  const end = formatDateTime(facts.endTime, timeZone);
+  // 同じ日なら終了は時刻だけ、日をまたぐなら月日も付ける("YYYY/MM/DD HH:MM")
+  const period = start ? `${start} – ${end.slice(0, 10) === start.slice(0, 10) ? end.slice(11) : end.slice(5)}` : "";
   return `
-    <div ${enter(0)}><span class="kicker">AGENTIC CODING REPORT</span></div>
-    <div ${enterWith("status-pill", 1)}>${status.icon}${status.label}</div>
-    <h1 ${enterWith(script.title.length > 22 ? "title long" : "title", 2)}>${escapeHtml(script.title)}</h1>
-    <p ${enterWith("headline", 3)}>${escapeHtml(script.headline)}</p>
-    <div ${enterWith("stats", 4)}>
-      <div class="stat"><div class="num">${number(facts.files.length)}</div><div class="label">変更ファイル</div></div>
-      <div class="stat"><div class="num">${delta("+", added, compact)}${delta("−", removed, compact, " small")}</div><div class="label">変更行</div></div>
-      <div class="stat"><div class="num">${elapsed.value}<small>${elapsed.unit}</small></div><div class="label">経過時間</div></div>
+    <h1 ${enter(script.title.length > 18 ? "title long" : "title", 0)}>${escapeHtml(script.title)}</h1>
+    <div class="facts">
+      <div class="rule rule-in" style="--i:1"></div>
+      <div ${enter("fact-row result", 2)} style="--i:2; --status:${status.color}">
+        <div class="fact-label">結果</div>
+        <div class="fact-body">
+          <div class="result-line"><span class="mark">${status.mark}</span>${escapeHtml(status.label)}</div>
+          <p class="lede">${escapeHtml(script.headline)}</p>
+        </div>
+      </div>
+      <div class="rule thin rule-in" style="--i:3"></div>
+      <div ${enter("figures", 4)}>
+        <div class="figure"><div class="fact-label">変更ファイル</div><div class="num">${number(facts.files.length)}</div></div>
+        <div class="figure"><div class="fact-label">変更行</div><div class="num">${delta("+", added, compact)}<span class="sub">${delta("−", removed, compact)}</span></div></div>
+        <div class="figure"><div class="fact-label">${durationLabel}</div><div class="num">${duration.value}<small>${duration.unit}</small></div></div>
+      </div>
+      <div class="rule thin rule-in" style="--i:5"></div>
     </div>
-    ${period ? `<div ${enterWith("when mono", 5)}>${escapeHtml(period)}</div>` : ""}`;
+    ${period ? `<div ${enter("when", 6)}>${escapeHtml(period)}</div>` : ""}`;
 }
 
 function requestScene(script: VideoScript, facts: SessionFacts): string {
   return `
-    ${sectionLabel(1, "ご依頼の内容")}
-    <blockquote ${enterWith("quote", 1)}>${escapeHtml(script.request.summary)}</blockquote>
-    <div ${enterWith("note", 2)}>指示 ${number(facts.userPrompts)} 回 · ツール実行 ${number(facts.toolCalls)} 回</div>`;
+    ${sectionHead("ご依頼の内容")}
+    <blockquote ${enter("quote", 1)}>「${escapeHtml(script.request.summary)}」</blockquote>
+    <div ${enter("note", 2)}>指示 ${number(facts.userPrompts)} 回 ・ ツール実行 ${number(facts.toolCalls)} 回</div>`;
 }
 
 function fileList(files: FileChange[], limit: number): string {
@@ -111,54 +122,58 @@ function fileList(files: FileChange[], limit: number): string {
     .map(
       (f) =>
         `<li class="file"><span class="path">${escapeHtml(shortenPath(f.path))}</span>` +
-        `<span class="diff">${f.created ? '<span class="new">NEW</span>' : ""}${delta("+", f.added)} ${delta("−", f.removed)}</span></li>`,
+        `<span class="diff">${f.created ? '<span class="new">新規</span>' : ""}${delta("+", f.added)} ${delta("−", f.removed)}</span></li>`,
     )
     .join("");
   const more = files.length > shown.length ? `<div class="more">ほか ${files.length - shown.length} ファイル</div>` : "";
-  return `<div ${enterWith("files", 6)}>
-      <div class="files-head">変更ファイル <b>${number(files.length)}</b>${delta("+", added)}${delta("−", removed)}</div>
+  return `<div ${enter("files", 6)}>
+      <div class="files-head">変更ファイル <b>${number(files.length)}</b> 件　${delta("+", added)} ${delta("−", removed)}</div>
       <ul class="mono">${rows}</ul>${more}
     </div>`;
 }
 
 function workScene(script: VideoScript, facts: SessionFacts): string {
   const items = script.work.items
-    .map((item, i) => `<li ${enterWith("item", i + 1)}><span class="icon">${ICONS.check}</span><span>${escapeHtml(item)}</span></li>`)
+    .map(
+      (item, i) =>
+        `<li ${enter("row", i + 1)}><span class="num-mark">${i + 1}</span><span class="row-text">${escapeHtml(item)}</span></li>`,
+    )
     .join("");
   return `
-    ${sectionLabel(2, "実施した作業")}
-    <ul class="items">${items}</ul>
+    ${sectionHead("実施した作業")}
+    <ol class="rows">${items}</ol>
     ${fileList(facts.files, script.work.items.length >= 4 ? 3 : 5)}`;
 }
 
 function verificationScene(script: VideoScript): string {
   const items = script.verification.items;
   const body = items.length
-    ? `<ul class="checks">${items
+    ? `<ul class="rows">${items
         .map(
           (item, i) =>
-            `<li ${enterWith(`check ${item.result}`, i + 1)}><span class="icon">${CHECK[item.result].icon}</span>` +
-            `<span class="label">${escapeHtml(item.label)}</span><span class="result">${CHECK[item.result].label}</span></li>`,
+            `<li ${enter(`row check ${item.result}`, i + 1)}><span class="check-mark">${CHECK[item.result].mark}</span>` +
+            `<span class="row-text">${escapeHtml(item.label)}</span><span class="check-result">${CHECK[item.result].label}</span></li>`,
         )
         .join("")}</ul>`
-    : `<div ${enterWith("empty warn", 1)}>${ICONS.dash}<span>検証の記録はありません</span></div>`;
-  return `${sectionLabel(3, "検証の結果")}${body}`;
+    : `<p ${enter("statement warn", 1)}><span class="check-mark">−</span>検証の記録はありません</p>`;
+  return `${sectionHead("検証の結果")}${body}`;
 }
 
 function decisionsScene(script: VideoScript): string {
   const items = script.decisions.items;
   if (items.length === 0) {
-    return `${sectionLabel(4, "ご判断いただく事項")}
-      <div ${enterWith("empty ok", 1)}>${ICONS.check}<span>判断が必要な事項はありません</span></div>`;
+    return `${sectionHead("ご判断いただく事項")}
+      <p ${enter("statement ok", 1)}><span class="check-mark">○</span>判断が必要な事項はありません</p>`;
   }
   const list = items
     .map(
       (item, i) =>
-        `<li ${enterWith("decision", i + 1)}><div class="d-title">${escapeHtml(item.title)}</div>` +
-        `<div class="d-detail">${escapeHtml(item.detail)}</div></li>`,
+        `<li ${enter("row decision", i + 1)}><span class="num-mark">${i + 1}</span><div class="row-text">` +
+        `<div class="d-title"><span class="marker">${escapeHtml(item.title)}</span></div>` +
+        `<div class="d-detail">${escapeHtml(item.detail)}</div></div></li>`,
     )
     .join("");
-  return `${sectionLabel(4, "ご判断ください", true)}<ol class="decisions">${list}</ol>`;
+  return `${sectionHead("ご判断ください", true)}<ol class="rows">${list}</ol>`;
 }
 
 function closingScene(
@@ -170,8 +185,8 @@ function closingScene(
 ): string {
   const items = script.next_steps.items;
   const next = items.length
-    ? `${sectionLabel(5, "次のステップ")}<ul class="next">${items
-        .map((item, i) => `<li ${enter(i + 1)}><span class="icon">${ICONS.arrow}</span><span>${escapeHtml(item)}</span></li>`)
+    ? `${sectionHead("次のステップ")}<ul class="rows next">${items
+        .map((item, i) => `<li ${enter("row", i + 1)}><span class="arrow">→</span><span class="row-text">${escapeHtml(item)}</span></li>`)
         .join("")}</ul>`
     : "";
   const credits = [
@@ -179,204 +194,167 @@ function closingScene(
       ? `要約: ${summarizer} による自動生成。正確な内容はセッションログで確認してください`
       : "要約: 手動で作成した台本",
     credit ? `音声: ${credit}` : undefined,
-    `セッション ${facts.sessionId?.slice(0, 8) ?? "-"} · ${formatDateTime(facts.endTime, timeZone) || "-"}`,
+    `セッション ${facts.sessionId?.slice(0, 8) ?? "-"} ・ ${formatDateTime(facts.endTime, timeZone) || "-"}`,
   ]
     .filter(Boolean)
     .map((line) => `<div>${escapeHtml(line!)}</div>`)
     .join("");
   return `${next}
-    <div ${enterWith("end", items.length + 1)}>
-      <div class="end-title">以上です</div>
-      <div class="credits">${credits}</div>
-    </div>`;
+    <div ${enter("end-mark", items.length + 1)}>以上</div>
+    <div ${enter("credits", items.length + 2)}>${credits}</div>`;
 }
 
 const STYLE = String.raw`
 :root {
-  --bg: #0a0f1e;
-  --text: #f4f6fb;
-  --muted: #aab3c8;
-  --faint: #6f7a96;
-  --surface: rgba(255, 255, 255, 0.055);
-  --border: rgba(255, 255, 255, 0.1);
-  --brand: #8ea2ff;
-  --pass: #34d399;
-  --fail: #f87171;
-  --skip: #94a3b8;
-  --warn: #fbbf24;
+  --paper: #f5f5f1;
+  --ink: #17171b;
+  --ink-2: #4a4a53;
+  --ink-3: #6e6e78;
+  --rule: rgba(23, 23, 27, 0.18);
+  --pass: #1e7a4c;
+  --fail: #b42318;
+  --skip: #6e6e78;
+  --attention: #c2410c;
+  --marker: #ffe58a;
+  --serif: "Noto Serif JP Variable", serif;
+  --gothic: "Zen Kaku Gothic New", sans-serif;
+  --mono: "JetBrains Mono Variable", "Zen Kaku Gothic New", monospace;
 }
 * { box-sizing: border-box; margin: 0; padding: 0; }
-html, body { width: 1080px; height: 1920px; overflow: hidden; background: var(--bg); }
+html, body { width: 1080px; height: 1920px; overflow: hidden; background: var(--paper); }
 body {
-  font-family: "Noto Sans JP Variable", sans-serif;
-  color: var(--text);
+  font-family: var(--gothic);
+  color: var(--ink);
   -webkit-font-smoothing: antialiased;
   line-break: strict;
   word-break: auto-phrase;
+  font-kerning: normal;
 }
-.mono { font-family: "JetBrains Mono Variable", "Noto Sans JP Variable", monospace; }
-svg { fill: none; stroke: currentColor; stroke-width: 2.6; stroke-linecap: round; stroke-linejoin: round; }
-svg .fill { fill: currentColor; stroke: none; }
-#stage { position: relative; width: 1080px; height: 1920px; overflow: hidden; }
-.bg {
-  position: absolute; inset: 0;
-  background:
-    radial-gradient(900px 700px at 12% 6%, color-mix(in srgb, var(--status) 24%, transparent), transparent 70%),
-    radial-gradient(800px 800px at 100% 78%, rgba(110, 130, 255, 0.17), transparent 70%),
-    linear-gradient(180deg, #0c1224 0%, #0a0f1e 55%, #070b16 100%);
-}
-.bg::after {
-  content: ""; position: absolute; inset: 0;
-  background-image:
-    linear-gradient(rgba(255, 255, 255, 0.035) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(255, 255, 255, 0.035) 1px, transparent 1px);
-  background-size: 72px 72px;
-  -webkit-mask-image: linear-gradient(180deg, rgba(0, 0, 0, 0.9), transparent 80%);
-}
+.mono { font-family: var(--mono); }
+#stage { position: relative; width: 1080px; height: 1920px; overflow: hidden; background: var(--paper); }
 
-header.top { position: absolute; top: 76px; left: 72px; right: 72px; }
-.top-row { display: flex; justify-content: space-between; align-items: center; font-size: 30px; color: var(--muted); }
-.brand { display: flex; align-items: center; gap: 16px; font-weight: 700; color: var(--text); letter-spacing: 0.04em; }
-.brand .dot { width: 18px; height: 18px; border-radius: 50%; background: var(--status); box-shadow: 0 0 24px var(--status); }
-.counter { font-variant-numeric: tabular-nums; letter-spacing: 0.06em; }
-.progress { display: flex; gap: 10px; margin-top: 28px; }
-.seg { flex: 1; height: 8px; border-radius: 4px; background: rgba(255, 255, 255, 0.14); }
-.seg.done { background: rgba(255, 255, 255, 0.5); }
-.seg.current { background: var(--brand); }
+/* 題字(マストヘッド): 上辺の二重罫 */
+header.masthead { position: absolute; top: 72px; left: 80px; right: 80px; }
+.mast-row { display: flex; justify-content: space-between; align-items: baseline; gap: 24px; }
+.mast-title { font-family: var(--serif); font-weight: 900; font-size: 40px; letter-spacing: 0.08em; }
+.mast-meta { font-size: 26px; color: var(--ink-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.double-rule { margin-top: 18px; border-top: 4px solid var(--ink); padding-top: 5px; }
+.double-rule::after { content: ""; display: block; border-top: 1.5px solid var(--ink); }
 
-main { position: absolute; top: 240px; left: 72px; right: 72px; height: 1170px; }
-.scene { position: absolute; inset: 0; display: none; flex-direction: column; justify-content: center; }
+main { position: absolute; top: 230px; left: 80px; right: 80px; height: 1180px; }
+/* 本文ページは天揃え(見出しの位置をそろえる)。表紙だけ中央に置く */
+.scene { position: absolute; inset: 0; display: none; flex-direction: column; justify-content: flex-start; padding-top: 40px; }
+.scene[data-kind="opening"] { justify-content: center; padding-top: 0; }
 .scene.active { display: flex; }
 /* --u は文字や余白の単位。内容があふれるシーンでは小さくする */
-.content { --u: calc(var(--s, 1) * 1px); display: flex; flex-direction: column; gap: calc(44 * var(--u)); }
+.content { --u: calc(var(--s, 1) * 1px); display: flex; flex-direction: column; gap: calc(40 * var(--u)); }
 
-.enter { animation: rise 0.7s cubic-bezier(0.16, 1, 0.3, 1) both; animation-delay: calc(var(--i, 0) * 0.12s + 0.08s); }
-@keyframes rise { from { opacity: 0; transform: translateY(40px); } to { opacity: 1; transform: none; } }
+.enter { animation: rise 0.38s cubic-bezier(0.2, 0, 0, 1) both; animation-delay: calc(var(--i, 0) * 0.07s + 0.06s); }
+@keyframes rise { from { opacity: 0; transform: translateY(14px); } to { opacity: 1; transform: none; } }
+.rule { height: 0; border-top: 2px solid var(--ink); }
+.rule.thin { border-top: 1px solid var(--rule); }
+.rule-in { transform-origin: left center; animation: draw 0.45s cubic-bezier(0.2, 0, 0, 1) both; animation-delay: calc(var(--i, 0) * 0.07s); }
+@keyframes draw { from { transform: scaleX(0); } to { transform: scaleX(1); } }
 
-.kicker { font-size: calc(28 * var(--u)); letter-spacing: 0.32em; color: var(--faint); font-weight: 700; }
-.status-pill {
-  align-self: flex-start; display: inline-flex; align-items: center; gap: calc(14 * var(--u));
-  padding: calc(14 * var(--u)) calc(34 * var(--u)) calc(14 * var(--u)) calc(24 * var(--u));
-  border-radius: 999px; font-size: calc(42 * var(--u)); font-weight: 800; color: var(--status);
-  background: color-mix(in srgb, var(--status) 15%, transparent);
-  border: 3px solid color-mix(in srgb, var(--status) 55%, transparent);
-}
-.status-pill svg { width: calc(48 * var(--u)); height: calc(48 * var(--u)); stroke-width: 3; }
+/* 表紙 */
 .title {
-  font-size: calc(96 * var(--u)); line-height: 1.2; font-weight: 900; letter-spacing: -0.01em;
-  text-wrap: balance; font-feature-settings: "palt";
+  font-family: var(--serif); font-weight: 900; font-size: calc(104 * var(--u)); line-height: 1.22;
+  letter-spacing: -0.005em; font-feature-settings: "palt"; text-wrap: balance;
 }
-.title.long { font-size: calc(80 * var(--u)); }
-.headline { font-size: calc(46 * var(--u)); line-height: 1.55; color: var(--muted); font-weight: 500; text-wrap: balance; }
-.stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: calc(20 * var(--u)); }
-.stat { background: var(--surface); border: 1px solid var(--border); border-radius: calc(28 * var(--u)); padding: calc(28 * var(--u)) calc(26 * var(--u)) calc(24 * var(--u)); }
-.stat .num { font-size: calc(64 * var(--u)); font-weight: 800; line-height: 1.05; font-variant-numeric: tabular-nums; letter-spacing: -0.02em; white-space: nowrap; }
-.stat .num small { font-size: calc(32 * var(--u)); font-weight: 700; margin-left: calc(6 * var(--u)); color: var(--muted); }
-.stat .num .small { display: block; font-size: calc(34 * var(--u)); font-weight: 700; margin-top: calc(4 * var(--u)); }
-.stat .label { margin-top: calc(14 * var(--u)); font-size: calc(28 * var(--u)); color: var(--muted); }
-.when { font-size: calc(28 * var(--u)); color: var(--faint); }
+.title.long { font-size: calc(84 * var(--u)); }
+.facts { display: flex; flex-direction: column; gap: calc(26 * var(--u)); }
+.fact-row { display: grid; grid-template-columns: calc(150 * var(--u)) 1fr; gap: calc(24 * var(--u)); align-items: start; }
+.fact-label { font-size: calc(26 * var(--u)); font-weight: 700; color: var(--ink-3); letter-spacing: 0.04em; padding-top: calc(10 * var(--u)); }
+.result-line {
+  display: flex; align-items: baseline; gap: calc(16 * var(--u));
+  font-size: calc(58 * var(--u)); font-weight: 900; color: var(--status); line-height: 1.2;
+}
+.result-line .mark { font-family: var(--serif); font-weight: 700; }
+.lede { margin-top: calc(14 * var(--u)); font-size: calc(40 * var(--u)); font-weight: 500; line-height: 1.6; color: var(--ink-2); text-wrap: balance; }
+.figures { display: grid; grid-template-columns: 1fr 1.3fr 1fr; }
+.figure { padding: 0 calc(22 * var(--u)); border-left: 1px solid var(--rule); }
+.figure:first-child { padding-left: 0; border-left: none; }
+.figure .num {
+  margin-top: calc(6 * var(--u)); font-family: var(--serif); font-weight: 800; font-size: calc(76 * var(--u));
+  line-height: 1.1; font-variant-numeric: tabular-nums lining-nums; white-space: nowrap;
+}
+.figure .num small { font-family: var(--gothic); font-size: calc(30 * var(--u)); font-weight: 700; margin-left: calc(6 * var(--u)); color: var(--ink-2); }
+.figure .num .sub { display: block; font-size: calc(34 * var(--u)); font-weight: 700; margin-top: calc(2 * var(--u)); }
+.when { font-size: calc(26 * var(--u)); color: var(--ink-3); font-variant-numeric: tabular-nums; }
 .plus { color: var(--pass); }
 .minus { color: var(--fail); }
-.plus.zero, .minus.zero { color: var(--faint); }
+.plus.zero, .minus.zero { color: var(--ink-3); }
 
-.section-label { display: flex; align-items: center; gap: calc(22 * var(--u)); font-size: calc(44 * var(--u)); font-weight: 800; }
-.section-label .no {
-  font-family: "JetBrains Mono Variable", monospace; font-size: calc(30 * var(--u)); font-weight: 800;
-  color: #0a0f1e; background: var(--brand); border-radius: calc(12 * var(--u)); padding: calc(6 * var(--u)) calc(14 * var(--u));
-}
-.section-label.attention { color: var(--warn); }
-.section-label.attention .no { background: var(--warn); }
+/* 欄見出し */
+.section { display: flex; flex-direction: column; gap: calc(18 * var(--u)); }
+.section-title { font-size: calc(42 * var(--u)); font-weight: 900; letter-spacing: 0.04em; }
+.section.attention .rule { border-top-color: var(--attention); border-top-width: 4px; }
+.section.attention .section-title { color: var(--attention); }
 
+/* 依頼 */
 .quote {
-  position: relative; font-size: calc(60 * var(--u)); line-height: 1.5; font-weight: 700;
-  padding: calc(56 * var(--u)) calc(56 * var(--u)) calc(56 * var(--u)) calc(66 * var(--u));
-  background: var(--surface); border: 1px solid var(--border); border-radius: calc(36 * var(--u));
-  text-wrap: balance;
+  font-family: var(--serif); font-weight: 700; font-size: calc(60 * var(--u)); line-height: 1.6;
+  text-indent: -0.5em; padding-left: 0.5em; text-wrap: pretty; font-feature-settings: "palt";
 }
-.quote::before {
-  content: ""; position: absolute; left: 0; top: calc(44 * var(--u)); bottom: calc(44 * var(--u));
-  width: calc(10 * var(--u)); border-radius: 0 8px 8px 0; background: var(--brand);
-}
-.note { font-size: calc(30 * var(--u)); color: var(--faint); }
+.note { font-size: calc(28 * var(--u)); color: var(--ink-3); }
 
-.items, .checks, .next, .decisions { list-style: none; display: flex; flex-direction: column; gap: calc(22 * var(--u)); }
-.item {
-  display: flex; gap: calc(26 * var(--u)); align-items: flex-start; font-size: calc(48 * var(--u)); line-height: 1.45; font-weight: 650;
-  padding: calc(30 * var(--u)) calc(36 * var(--u)); background: var(--surface); border: 1px solid var(--border); border-radius: calc(28 * var(--u));
-  text-wrap: balance;
+/* 罫線で区切った行 */
+.rows { list-style: none; display: flex; flex-direction: column; }
+.row {
+  display: grid; grid-template-columns: calc(64 * var(--u)) 1fr auto; column-gap: calc(18 * var(--u)); align-items: baseline;
+  padding: calc(24 * var(--u)) 0; border-bottom: 1px solid var(--rule);
 }
-.item .icon, .check .icon {
-  flex: none; width: calc(60 * var(--u)); height: calc(60 * var(--u)); border-radius: 50%;
-  display: grid; place-items: center;
-}
-.item .icon { margin-top: calc(5 * var(--u)); background: color-mix(in srgb, var(--pass) 18%, transparent); color: var(--pass); }
-.item .icon svg, .check .icon svg { width: calc(36 * var(--u)); height: calc(36 * var(--u)); stroke-width: 3; }
+.row:first-child { padding-top: calc(4 * var(--u)); }
+.row-text { font-size: calc(46 * var(--u)); font-weight: 700; line-height: 1.45; text-wrap: balance; }
+.num-mark { font-family: var(--serif); font-weight: 800; font-size: calc(48 * var(--u)); color: var(--ink-3); font-variant-numeric: lining-nums; }
+.check-mark { font-family: var(--serif); font-weight: 800; font-size: calc(52 * var(--u)); line-height: 1; }
+.check-result { font-size: calc(32 * var(--u)); font-weight: 700; white-space: nowrap; }
+.check.pass .check-mark, .check.pass .check-result { color: var(--pass); }
+.check.fail .check-mark, .check.fail .check-result { color: var(--fail); }
+.check.not_run .check-mark, .check.not_run .check-result { color: var(--skip); }
+.statement { display: flex; align-items: baseline; gap: calc(22 * var(--u)); font-size: calc(50 * var(--u)); font-weight: 900; line-height: 1.4; }
+.statement.ok { color: var(--pass); }
+.statement.warn { color: var(--ink-2); }
 
-.files { padding: calc(30 * var(--u)) calc(36 * var(--u)); border-radius: calc(28 * var(--u)); background: rgba(0, 0, 0, 0.28); border: 1px solid var(--border); }
-.files-head { display: flex; align-items: baseline; gap: calc(18 * var(--u)); font-size: calc(32 * var(--u)); color: var(--muted); margin-bottom: calc(14 * var(--u)); }
-.files-head b { color: var(--text); font-size: calc(40 * var(--u)); margin-right: calc(10 * var(--u)); }
+/* 変更ファイル */
+.files { padding-top: calc(6 * var(--u)); }
+.files-head { font-size: calc(30 * var(--u)); font-weight: 700; color: var(--ink-2); margin-bottom: calc(10 * var(--u)); }
+.files-head b { color: var(--ink); font-size: calc(36 * var(--u)); }
 .files ul { list-style: none; }
-.file { display: flex; justify-content: space-between; gap: calc(24 * var(--u)); font-size: calc(30 * var(--u)); line-height: 1.75; }
-.file .path { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #d6dcef; }
+.file { display: flex; justify-content: space-between; gap: calc(24 * var(--u)); font-size: calc(28 * var(--u)); line-height: 1.8; border-bottom: 1px dotted var(--rule); }
+.file .path { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .file .diff { flex: none; font-variant-numeric: tabular-nums; }
-.file .new { font-size: calc(22 * var(--u)); font-weight: 800; color: #0a0f1e; background: var(--brand); border-radius: 6px; padding: 2px 8px; margin-right: calc(14 * var(--u)); vertical-align: 3px; }
-.files .more { font-size: calc(28 * var(--u)); color: var(--faint); margin-top: calc(6 * var(--u)); }
+.file .new { font-family: var(--gothic); font-size: calc(22 * var(--u)); font-weight: 700; color: var(--ink-2); border: 1px solid var(--ink-3); padding: 0 calc(8 * var(--u)); margin-right: calc(14 * var(--u)); vertical-align: 2px; }
+.files .more { font-size: calc(26 * var(--u)); color: var(--ink-3); margin-top: calc(8 * var(--u)); }
 
-.check {
-  display: grid; grid-template-columns: auto 1fr auto; gap: calc(26 * var(--u)); align-items: center;
-  padding: calc(30 * var(--u)) calc(34 * var(--u)); border-radius: calc(28 * var(--u)); background: var(--surface); border: 1px solid var(--border);
-  font-size: calc(46 * var(--u)); font-weight: 650; line-height: 1.4; text-wrap: balance;
-}
-.check .result { font-size: calc(32 * var(--u)); font-weight: 800; padding: calc(8 * var(--u)) calc(22 * var(--u)); border-radius: 999px; white-space: nowrap; }
-.check.pass .icon, .check.pass .result { color: var(--pass); background: color-mix(in srgb, var(--pass) 16%, transparent); }
-.check.fail .icon, .check.fail .result { color: var(--fail); background: color-mix(in srgb, var(--fail) 16%, transparent); }
-.check.not_run .icon, .check.not_run .result { color: var(--skip); background: color-mix(in srgb, var(--skip) 16%, transparent); }
-.check.fail { border-color: color-mix(in srgb, var(--fail) 45%, transparent); }
+/* 判断事項: 見出しに蛍光ペンの下線 */
+.decision .row-text { font-weight: 400; }
+.d-title { font-size: calc(48 * var(--u)); font-weight: 900; line-height: 1.45; text-wrap: balance; }
+.d-title .marker { background: linear-gradient(transparent 62%, var(--marker) 62%); }
+.d-detail { margin-top: calc(10 * var(--u)); font-size: calc(34 * var(--u)); font-weight: 500; line-height: 1.6; color: var(--ink-2); text-wrap: pretty; }
 
-.empty {
-  display: flex; align-items: center; gap: calc(28 * var(--u)); font-size: calc(50 * var(--u)); font-weight: 750; line-height: 1.4;
-  padding: calc(48 * var(--u)); border-radius: calc(32 * var(--u)); background: var(--surface); border: 1px solid var(--border);
-}
-.empty svg { flex: none; width: calc(72 * var(--u)); height: calc(72 * var(--u)); stroke-width: 3; }
-.empty.ok { color: var(--pass); }
-.empty.warn { color: var(--warn); }
+/* 結び */
+.next .row { grid-template-columns: calc(56 * var(--u)) 1fr; }
+.arrow { font-family: var(--serif); font-weight: 700; font-size: calc(44 * var(--u)); color: var(--ink-3); }
+.end-mark { align-self: flex-end; font-family: var(--serif); font-weight: 800; font-size: calc(64 * var(--u)); letter-spacing: 0.2em; }
+.credits { font-size: calc(26 * var(--u)); line-height: 1.8; color: var(--ink-3); border-top: 1px solid var(--rule); padding-top: calc(18 * var(--u)); }
 
-.decisions { counter-reset: decision; gap: calc(26 * var(--u)); }
-.decision {
-  position: relative; padding: calc(36 * var(--u)) calc(40 * var(--u)) calc(36 * var(--u)) calc(124 * var(--u));
-  border-radius: calc(32 * var(--u)); background: color-mix(in srgb, var(--warn) 9%, transparent);
-  border: 2px solid color-mix(in srgb, var(--warn) 45%, transparent);
-}
-.decision::before {
-  counter-increment: decision; content: counter(decision);
-  position: absolute; left: calc(36 * var(--u)); top: calc(36 * var(--u));
-  width: calc(62 * var(--u)); height: calc(62 * var(--u)); border-radius: 50%;
-  display: grid; place-items: center; background: var(--warn); color: #1a1405; font-weight: 900; font-size: calc(36 * var(--u));
-}
-.d-title { font-size: calc(52 * var(--u)); font-weight: 800; line-height: 1.35; text-wrap: balance; }
-.d-detail { margin-top: calc(14 * var(--u)); font-size: calc(36 * var(--u)); line-height: 1.55; color: var(--muted); text-wrap: pretty; }
-
-.next li { display: flex; gap: calc(24 * var(--u)); align-items: flex-start; font-size: calc(46 * var(--u)); font-weight: 650; line-height: 1.45; text-wrap: balance; }
-.next .icon { flex: none; color: var(--brand); width: calc(52 * var(--u)); height: calc(52 * var(--u)); margin-top: calc(8 * var(--u)); }
-.next .icon svg { width: 100%; height: 100%; stroke-width: 3; }
-.end { padding-top: calc(40 * var(--u)); border-top: 1px solid var(--border); }
-.end-title { font-size: calc(88 * var(--u)); font-weight: 900; letter-spacing: 0.02em; }
-.credits { margin-top: calc(24 * var(--u)); font-size: calc(28 * var(--u)); line-height: 1.8; color: var(--muted); }
-
-.caption-zone { position: absolute; left: 60px; right: 60px; top: 1440px; height: 320px; display: flex; align-items: center; justify-content: center; }
+/* 字幕: 墨ベタに白抜き */
+.caption-zone { position: absolute; left: 60px; right: 60px; top: 1450px; height: 300px; display: flex; align-items: center; justify-content: center; }
+/* 幅は文の長さによらず一定。均等改行(balance)は文節の途中で切れやすいので使わない */
 #caption {
-  max-width: 100%; padding: 22px 36px; border-radius: 26px;
-  background: rgba(6, 10, 22, 0.8); border: 1px solid rgba(255, 255, 255, 0.08);
-  font-size: 46px; font-weight: 750; line-height: 1.45; text-align: center;
-  text-wrap: balance; opacity: 0;
+  width: 100%; padding: 24px 40px; background: var(--ink); color: var(--paper);
+  font-size: 46px; font-weight: 700; line-height: 1.5; text-align: center; text-wrap: pretty; opacity: 0;
 }
-footer.bottom {
-  position: absolute; left: 72px; right: 72px; bottom: 64px;
-  display: flex; justify-content: space-between; align-items: center; gap: 24px; font-size: 26px; color: var(--faint);
+
+/* 柱(フッター) */
+footer.folio {
+  position: absolute; left: 80px; right: 80px; bottom: 60px; padding-top: 14px; border-top: 1px solid var(--rule);
+  display: flex; justify-content: space-between; align-items: baseline; gap: 24px; font-size: 24px; color: var(--ink-3);
 }
-.where { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.badges { display: flex; gap: 12px; flex: none; }
-.badge { padding: 6px 16px; border-radius: 999px; border: 1px solid var(--border); color: var(--muted); }
+.where { font-family: var(--mono); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.right { display: flex; gap: 22px; flex: none; }
+.page { font-variant-numeric: tabular-nums; color: var(--ink-2); font-weight: 700; }
 `;
 
 /** ページ内で動くスクリプト。__seek(t) で時刻 t の状態を描き、同じ見た目かどうかの判定キーを返す。 */
@@ -384,28 +362,23 @@ const PAGE_SCRIPT = String.raw`
 (() => {
   const data = JSON.parse(document.getElementById("timeline-data").textContent);
   const scenes = [...document.querySelectorAll(".scene")];
-  const segments = [...document.querySelectorAll(".seg")];
-  const counter = document.getElementById("counter");
+  const page = document.getElementById("page");
   const caption = document.getElementById("caption");
   const main = document.querySelector("main");
   let current = -1;
 
   const activate = (index) => {
     scenes.forEach((el, i) => el.classList.toggle("active", i === index));
-    segments.forEach((el, i) => {
-      el.classList.toggle("done", i < index);
-      el.classList.toggle("current", i === index);
-    });
-    counter.textContent = (index + 1) + " / " + scenes.length;
+    page.textContent = (index + 1) + " / " + scenes.length;
     current = index;
   };
 
   window.__prepare = async () => {
     const text = document.body.textContent + data.scenes.flatMap((s) => s.cues.map((c) => c.text)).join("");
     await Promise.all([
-      ...[400, 500, 650, 700, 750, 800, 900].map((w) => document.fonts.load(w + ' 48px "Noto Sans JP Variable"', text)),
-      document.fonts.load('400 30px "JetBrains Mono Variable"', text),
-      document.fonts.load('800 30px "JetBrains Mono Variable"', text),
+      ...[500, 700, 800, 900].map((w) => document.fonts.load(w + ' 48px "Noto Serif JP Variable"', text)),
+      ...[400, 500, 700, 900].map((w) => document.fonts.load(w + ' 48px "Zen Kaku Gothic New"', text)),
+      document.fonts.load('400 28px "JetBrains Mono Variable"', text),
     ]);
     await document.fonts.ready;
     const fitted = [];
@@ -432,7 +405,7 @@ const PAGE_SCRIPT = String.raw`
     if (index !== current) activate(index);
     const scene = data.scenes[index];
     const local = t - scene.start;
-    const fade = Math.round(clamp01(Math.min(local / 0.25, (scene.end - t) / 0.2)) * 100) / 100;
+    const fade = Math.round(clamp01(Math.min(local / 0.2, (scene.end - t) / 0.18)) * 100) / 100;
     const el = scenes[index];
     el.style.opacity = String(fade);
 
@@ -454,7 +427,7 @@ const PAGE_SCRIPT = String.raw`
         caption.textContent = cue.text;
         caption.dataset.key = key;
       }
-      captionOpacity = Math.round(clamp01((t - cue.start + CAPTION_LEAD) / 0.15) * fade * 100) / 100;
+      captionOpacity = Math.round(clamp01((t - cue.start + CAPTION_LEAD) / 0.12) * fade * 100) / 100;
     }
     caption.style.opacity = String(captionOpacity);
     return [index, fade, progress.join(","), cueIndex, captionOpacity].join("|");
@@ -476,8 +449,9 @@ export function buildHtml(input: TemplateInput): string {
   const sections = scenes
     .map((scene) => `<section class="scene" data-kind="${scene.kind}"><div class="content">${bodies[scene.kind]}</div></section>`)
     .join("\n");
-  const segments = scenes.map(() => '<div class="seg"></div>').join("");
-  const where = [facts.project, facts.branch].filter(Boolean).join(" · ");
+  const where = [facts.project, facts.branch].filter(Boolean).join(" ・ ");
+  const date = formatDateTime(facts.endTime, timeZone).slice(0, 10).replaceAll("/", ".");
+  const labels = [summarizer ? "AI 要約" : undefined, credit].filter(Boolean).map((l) => `<span>${escapeHtml(l!)}</span>`);
   const data = JSON.stringify({ scenes: scenes.map(({ kind, start, end, cues }) => ({ kind, start, end, cues })) }).replace(
     /</g,
     "\\u003c",
@@ -487,27 +461,30 @@ export function buildHtml(input: TemplateInput): string {
 <html lang="ja">
 <head>
 <meta charset="utf-8">
-<link rel="stylesheet" href="/fonts/noto/index.css">
+<link rel="stylesheet" href="/fonts/serif/index.css">
+<link rel="stylesheet" href="/fonts/gothic/400.css">
+<link rel="stylesheet" href="/fonts/gothic/500.css">
+<link rel="stylesheet" href="/fonts/gothic/700.css">
+<link rel="stylesheet" href="/fonts/gothic/900.css">
 <link rel="stylesheet" href="/fonts/mono/index.css">
 <style>${STYLE}</style>
 </head>
 <body>
-<div id="stage" style="--status: ${STATUS[script.status].color}">
-  <div class="bg"></div>
-  <header class="top">
-    <div class="top-row">
-      <div class="brand"><span class="dot"></span>作業報告</div>
-      <div class="counter mono" id="counter"></div>
+<div id="stage">
+  <header class="masthead">
+    <div class="mast-row">
+      <div class="mast-title">作業報告</div>
+      <div class="mast-meta">${escapeHtml(date)}</div>
     </div>
-    <div class="progress">${segments}</div>
+    <div class="double-rule"></div>
   </header>
   <main>
 ${sections}
   </main>
   <div class="caption-zone"><div id="caption"></div></div>
-  <footer class="bottom">
-    <span class="where mono">${escapeHtml(where)}</span>
-    <span class="badges">${summarizer ? '<span class="badge">AI 要約</span>' : ""}${credit ? `<span class="badge">${escapeHtml(credit)}</span>` : ""}</span>
+  <footer class="folio">
+    <span class="where">${escapeHtml(where)}</span>
+    <span class="right">${labels.join("")}<span class="page" id="page"></span></span>
   </footer>
 </div>
 <script id="timeline-data" type="application/json">${data}</script>

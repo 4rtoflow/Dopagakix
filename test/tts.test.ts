@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { SilentSynthesizer } from "../src/tts/silent.js";
+import type { Synthesizer } from "../src/tts/types.js";
 import { DEFAULT_VOICEVOX_URL, VoicevoxError, VoicevoxSynthesizer } from "../src/tts/voicevox.js";
 import { durationOf, encodeWav, mixInto, parseWav, silence } from "../src/tts/wav.js";
 
@@ -26,13 +27,13 @@ describe("wav", () => {
 });
 
 describe("SilentSynthesizer", () => {
-  it("文字数と話速から表示時間を決める", async () => {
-    const synth = new SilentSynthesizer(6.5, 1000);
-    const normal = durationOf(await synth.synthesize("あ".repeat(26), 1));
-    const fast = durationOf(await synth.synthesize("あ".repeat(26), 2));
-    expect(normal).toBeCloseTo(4.3, 2);
-    expect(fast).toBeLessThan(normal);
-    expect(durationOf(await synth.synthesize("短い", 1))).toBe(1.4);
+  it("文字数から表示時間を決め、読み上げの話速には左右されない", async () => {
+    const synth: Synthesizer = new SilentSynthesizer(6, 1000);
+    const normal = durationOf(await synth.synthesize("あ".repeat(24), 1));
+    const fast = durationOf(await synth.synthesize("あ".repeat(24), 2));
+    expect(normal).toBeCloseTo(4.4, 2);
+    expect(fast).toBe(normal);
+    expect(durationOf(await synth.synthesize("短い", 1))).toBe(1.6);
   });
 });
 

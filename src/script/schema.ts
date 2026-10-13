@@ -73,6 +73,8 @@ export const ScriptFileSchema = z.object({
       outputTokens: z.number().optional(),
     })
     .optional(),
+  /** 読み上げ文を書かせたときのキャラクター口調(記録用) */
+  persona: z.object({ id: z.string(), name: z.string() }).optional(),
   facts: SessionFactsSchema,
   script: VideoScriptSchema,
 });
