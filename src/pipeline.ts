@@ -18,6 +18,27 @@ import { type RenderStats, renderVideo } from "./video/render.js";
 import { buildHtml } from "./video/template.js";
 import { buildTimeline } from "./video/timeline.js";
 
+/** 動画と作業ファイルの出力先(既定) */
+export const DEFAULT_OUT_DIR = "dopagakix-out";
+
+/**
+ * 報告のために書いたファイル(台本など)を、作業の成果として数えないよう集計から除く。
+ * 既定の出力先(dopagakix-out)の中と、指定したディレクトリの中にあるファイルが対象。
+ */
+export function excludeOutputs(facts: SessionFacts, dirs: string[] = []): SessionFacts {
+  const base = facts.cwd ?? process.cwd();
+  const roots = dirs.map((dir) => path.resolve(dir));
+  const isOutput = (file: string) => {
+    const absolute = path.resolve(base, file);
+    return (
+      absolute.split(path.sep).includes(DEFAULT_OUT_DIR) ||
+      roots.some((root) => absolute === root || absolute.startsWith(`${root}${path.sep}`))
+    );
+  };
+  const files = facts.files.filter((file) => !isOutput(file.path));
+  return files.length === facts.files.length ? facts : { ...facts, files };
+}
+
 export interface LoadedSession extends LocatedTranscript {
   session: ParsedSession;
   facts: SessionFacts;
@@ -25,12 +46,15 @@ export interface LoadedSession extends LocatedTranscript {
   sessionId: string;
 }
 
-/** セッションログを探して読み、画面に出す数値を集計する。 */
-export async function loadSession(options: LocateOptions): Promise<LoadedSession> {
+/**
+ * セッションログを探して読み、画面に出す数値を集計する。
+ * outputDirs には、報告の台本などを置くディレクトリを渡す(集計から除く)。
+ */
+export async function loadSession(options: LocateOptions, outputDirs: string[] = []): Promise<LoadedSession> {
   const located = await locateTranscript(options);
   const session = await readTranscript(located.file);
   const sessionId = session.sessionId ?? path.basename(located.file, ".jsonl");
-  return { ...located, session, facts: collectFacts(session), sessionId };
+  return { ...located, session, facts: excludeOutputs(collectFacts(session), outputDirs), sessionId };
 }
 
 export interface DigestResult {

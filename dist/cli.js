@@ -6,7 +6,7 @@ import path from "node:path";
 import { Command, InvalidArgumentError, Option } from "commander";
 import { buildBrief, checkEnvironment } from "./brief.js";
 import { personaMismatch, resolvePersona } from "./persona.js";
-import { createSynthesizer, digestSession, loadReport, loadSession, prepareOutputRoot, renderReport } from "./pipeline.js";
+import { createSynthesizer, DEFAULT_OUT_DIR, digestSession, loadReport, loadSession, prepareOutputRoot, renderReport, } from "./pipeline.js";
 import { checkScript } from "./script/check.js";
 import { STATUS_LABELS } from "./script/schema.js";
 import { installSkill, SKILL_NAME, skillsDir } from "./skill.js";
@@ -111,15 +111,15 @@ const program = new Command()
 withSecondsOption(withVoiceOptions(withSessionOptions(program
     .command("prepare")
     .description("動画レポートの準備。出力先を作り、台本を書くのに必要な情報(画面に出る数値・口調・長さ・環境)を表示する"))))
-    .option("--out-dir <dir>", "出力先の親ディレクトリ(中身は git の管理対象から外す)", "dopagakix-out")
+    .option("--out-dir <dir>", "出力先の親ディレクトリ(中身は git の管理対象から外す)", DEFAULT_OUT_DIR)
     .option("--timezone <tz>", "時刻表示のタイムゾーン(例: Asia/Tokyo)。省略時は実行環境の設定")
     .option("--chromium <path>", "描画に使う Chromium の実行ファイル")
     .action(async (flags, command) => {
-    const loaded = await loadSession(locateOptions(flags));
+    const outRoot = path.resolve(flags.outDir);
+    const loaded = await loadSession(locateOptions(flags), [outRoot]);
     log(`ログ: ${loaded.file}(${FOUND_BY[loaded.how]})`);
     const persona = await choosePersona(flags);
     const environment = await checkEnvironment(flags);
-    const outRoot = path.resolve(flags.outDir);
     await prepareOutputRoot(outRoot);
     const runDir = path.join(outRoot, `${formatStamp(new Date(), flags.timezone)}-${loaded.sessionId.slice(0, 8)}`);
     await mkdir(runDir, { recursive: true });
@@ -157,7 +157,7 @@ withSecondsOption(withVoiceOptions(withSessionOptions(program
     let compared = "script.json に記録された数値と照合";
     if (!facts) {
         try {
-            const loaded = await loadSession(locateOptions(flags));
+            const loaded = await loadSession(locateOptions(flags), [path.dirname(path.resolve(reportPath))]);
             facts = loaded.facts;
             compared = `セッション ${loaded.sessionId.slice(0, 8)} のログ(${FOUND_BY[loaded.how]})と照合`;
         }
@@ -190,7 +190,7 @@ withRenderOptions(withSecondsOption(withVoiceOptions(withSessionOptions(program
         log("数値: script.json に記録されたものを使います");
     }
     else {
-        const loaded = await loadSession(locateOptions(flags));
+        const loaded = await loadSession(locateOptions(flags), [path.dirname(path.resolve(reportPath))]);
         facts = loaded.facts;
         log(`ログ: ${loaded.file}(${FOUND_BY[loaded.how]})`);
     }

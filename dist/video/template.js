@@ -46,6 +46,18 @@ const number = (n) => n.toLocaleString("ja-JP");
 const compact = (n) => n >= 100_000 ? `${Math.round(n / 1000)}k` : n >= 10_000 ? `${(n / 1000).toFixed(1)}k` : number(n);
 /** 増減の表示。0 は色を付けない */
 const delta = (sign, n, format = number) => `<span class="${sign === "+" ? "plus" : "minus"}${n === 0 ? " zero" : ""}">${sign}${format(n)}</span>`;
+/** 表示幅の目安(全角 1、半角英数 0.55) */
+function visualLength(text) {
+    return [...text].reduce((n, c) => n + (/[\x20-\x7e]/.test(c) ? 0.55 : 1), 0);
+}
+/**
+ * タイトルの文字の大きさ。日本語は文節の途中で改行しないようにしている(word-break: auto-phrase)が、
+ * 1 行に収まらない長い文節は途中で折り返されるため、2 行以上になるタイトルは小さめにする。
+ */
+function titleClass(title) {
+    const length = visualLength(title);
+    return length <= 8 ? "title" : length <= 20 ? "title mid" : "title long";
+}
 /** 要素の登場順(アニメーションの遅延)を付ける */
 const enter = (cls, i) => `class="enter ${cls}" style="--i:${i}"`;
 /** 新聞の欄見出しのように、罫線の下に見出しを置く */
@@ -64,7 +76,7 @@ function openingScene(script, facts, timeZone) {
     // 同じ日なら終了は時刻だけ、日をまたぐなら月日も付ける("YYYY/MM/DD HH:MM")
     const period = start ? `${start} – ${end.slice(0, 10) === start.slice(0, 10) ? end.slice(11) : end.slice(5)}` : "";
     return `
-    <h1 ${enter(script.title.length > 18 ? "title long" : "title", 0)}>${escapeHtml(script.title)}</h1>
+    <h1 ${enter(titleClass(script.title), 0)}>${escapeHtml(script.title)}</h1>
     <div class="facts">
       <div class="rule rule-in" style="--i:1"></div>
       <div ${enter("fact-row result", 2)} style="--i:2; --status:${status.color}">
@@ -218,7 +230,8 @@ main { position: absolute; top: 230px; left: 80px; right: 80px; height: 1180px; 
   font-family: var(--serif); font-weight: 900; font-size: calc(104 * var(--u)); line-height: 1.22;
   letter-spacing: -0.005em; font-feature-settings: "palt"; text-wrap: balance;
 }
-.title.long { font-size: calc(84 * var(--u)); }
+.title.mid { font-size: calc(84 * var(--u)); }
+.title.long { font-size: calc(72 * var(--u)); }
 .facts { display: flex; flex-direction: column; gap: calc(26 * var(--u)); }
 .fact-row { display: grid; grid-template-columns: calc(150 * var(--u)) 1fr; gap: calc(24 * var(--u)); align-items: start; }
 .fact-label { font-size: calc(26 * var(--u)); font-weight: 700; color: var(--ink-3); letter-spacing: 0.04em; padding-top: calc(10 * var(--u)); }

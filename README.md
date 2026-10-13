@@ -190,7 +190,7 @@ dopagakix render "$(npm root -g)/dopagakix/examples/script.example.json" --no-vo
 ## 注意事項
 
 - **ログ形式**: Claude Code のセッションログの形式は内部仕様で、バージョンごとに変わり、直接解析するスクリプトはどの更新でも動かなくなりうると公式に明記されています([Claude Code: Manage sessions](https://code.claude.com/docs/en/sessions#where-transcripts-are-stored))。Claude Code 2.1.29x のログで動作を確認しています。
-- **数値の範囲**: 変更ファイルと行数は、Edit / Write ツールでの変更だけを数えます。シェルのコマンド(`sed`、`git rm`、`npm install` など)で変更・削除したファイルは含みません。また、数値は常にセッション全体の集計です。
+- **数値の範囲**: 変更ファイルと行数は、Edit / Write ツールでの変更だけを数えます。シェルのコマンド(`sed`、`git rm`、`npm install` など)で変更・削除したファイルは含みません。報告のために書いた台本(`dopagakix-out/` の中)も数えません。また、数値は常にセッション全体の集計です。
 - **自己報告**: 台本はエージェントが自分の作業について書いたものです。重要な判断の前には、差分やテスト結果を確認してください。
 - **権限**: スキルは `allowed-tools: Bash(dopagakix *)` を指定しており、スキルを使うターンの間は `dopagakix` コマンドを許可の確認なしで実行します([Claude Code: Skills](https://code.claude.com/docs/en/skills))。
 - **VOICEVOX のクレジット**: VOICEVOX の利用規約では、VOICEVOX を利用したことがわかるクレジット表記が必要で、音声ライブラリ(キャラクター)ごとの規約にも従う必要があります([VOICEVOX 利用規約](https://voicevox.hiroshiba.jp/term/))。本ツールは「VOICEVOX:キャラクター名」を動画内に自動で表示します。使うキャラクターの規約は各自で確認してください。

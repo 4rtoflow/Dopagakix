@@ -5,7 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { createSynthesizer, loadReport, prepareOutputRoot, renderReport } from "../src/pipeline.js";
+import { createSynthesizer, excludeOutputs, loadReport, prepareOutputRoot, renderReport } from "../src/pipeline.js";
 import { ScriptFileSchema } from "../src/script/schema.js";
 import { SilentSynthesizer } from "../src/tts/silent.js";
 import { VoicevoxSynthesizer } from "../src/tts/voicevox.js";
@@ -56,6 +56,23 @@ describe("loadReport", () => {
     script.status = "done";
     await writeFile(missing, JSON.stringify(script));
     await expect(loadReport(missing)).rejects.toThrow(/形式が正しくありません[\s\S]*status[\s\S]*next_steps/);
+  });
+});
+
+describe("excludeOutputs", () => {
+  it("報告のために書いたファイル(出力先の中)を、変更ファイルの集計から除く", async () => {
+    const report = await loadReport(example);
+    const file = (p: string) => ({ path: p, added: 1, removed: 0, edits: 1, created: true });
+    const facts = {
+      ...report.facts!,
+      cwd: "/repo",
+      files: [file("src/a.ts"), file("dopagakix-out/20261013-x/report.json"), file("reports/run/report.json"), file("/elsewhere/b.ts")],
+    };
+    expect(excludeOutputs(facts).files.map((f) => f.path)).toEqual(["src/a.ts", "reports/run/report.json", "/elsewhere/b.ts"]);
+    expect(excludeOutputs(facts, ["/repo/reports/run"]).files.map((f) => f.path)).toEqual(["src/a.ts", "/elsewhere/b.ts"]);
+    // 除くものがなければ同じオブジェクトを返す
+    const clean = { ...facts, files: [file("src/a.ts")] };
+    expect(excludeOutputs(clean, ["/repo/reports"])).toBe(clean);
   });
 });
 

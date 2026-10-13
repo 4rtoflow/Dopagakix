@@ -62,6 +62,18 @@ describe("buildHtml", () => {
     expect(sameDay).toContain('<div class="fact-label">経過</div>');
   });
 
+  it("タイトルは長さに応じて小さくし、文節の途中での改行を減らす", async () => {
+    const script = VideoScriptSchema.parse(JSON.parse(await readFile(path.join(fixtures, "script.json"), "utf8")));
+    const timeline = await buildTimeline(script, new SilentSynthesizer(), { maxSeconds: 120, speed: 1, maxSpeed: 1.3 });
+    const titleOf = (title: string) =>
+      /<h1 class="enter ([^"]+)"/.exec(buildHtml({ script: { ...script, title }, facts, scenes: timeline.scenes, author: "agent" }))?.[1];
+    expect(titleOf("認証の修正")).toBe("title");
+    // 半角英数は幅を小さく数える
+    expect(titleOf("README と CI の修正")).toBe("title mid");
+    expect(titleOf("作業報告動画ツールのスキル化")).toBe("title mid");
+    expect(titleOf("ログイン画面のバリデーションとエラー表示の修正")).toBe("title long");
+  });
+
   it("台本中の HTML やスクリプト終了タグを無害化する", async () => {
     const script = VideoScriptSchema.parse(JSON.parse(await readFile(path.join(fixtures, "script.json"), "utf8")));
     script.title = "<img src=x onerror=alert(1)>";
