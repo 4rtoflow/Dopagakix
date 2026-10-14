@@ -1,7 +1,8 @@
 import { redactSecrets } from "../redact.js";
 import type { VideoScript } from "./schema.js";
 
-const LIMITS = { work: 5, verification: 4, decisions: 3, nextSteps: 3 } as const;
+/** 画面に表示できる項目数 */
+export const LIMITS = { work: 5, verification: 4, decisions: 3, nextSteps: 3 } as const;
 
 function clean(text: string): string {
   return redactSecrets(text.replace(/\s+/g, " ").trim()).text;
@@ -12,7 +13,7 @@ function cleanLines(lines: string[]): string[] {
 }
 
 /**
- * 台本を表示用に整える。LLM の出力にも手編集した script.json にも使う。
+ * 台本を表示用に整える。エージェントが書いた台本にも、手で編集した script.json にも使う。
  * 件数の上限を超えた項目は切り捨て、秘匿情報の取りこぼしをもう一度マスクする。
  */
 export function normalizeScript(script: VideoScript): VideoScript {

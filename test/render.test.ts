@@ -39,27 +39,39 @@ const facts: SessionFacts = {
 };
 
 describe("buildHtml", () => {
-  it("要約の作り手に応じてクレジットとバッジを出し分ける", async () => {
+  it("台本の書き手に応じてクレジットとラベルを出し分ける", async () => {
     const script = VideoScriptSchema.parse(JSON.parse(await readFile(path.join(fixtures, "script.json"), "utf8")));
     const timeline = await buildTimeline(script, new SilentSynthesizer(), { maxSeconds: 120, speed: 1, maxSpeed: 1.3 });
-    const automated = buildHtml({ script, facts, scenes: timeline.scenes, summarizer: "claude-opus-5-5" });
-    expect(automated).toContain("要約: claude-opus-5-5 による自動生成");
-    expect(automated).toContain("<span>AI 要約</span>");
-    const manual = buildHtml({ script, facts, scenes: timeline.scenes });
-    expect(manual).toContain("要約: 手動で作成した台本");
-    expect(manual).not.toContain("AI 要約");
+    const agent = buildHtml({ script, facts, scenes: timeline.scenes, author: "agent" });
+    expect(agent).toContain("報告: 作業をした AI エージェント(claude-opus-5-5)による自己報告。数値はセッションログから自動集計");
+    expect(agent).toContain("<span>AI 作成</span>");
+    const manual = buildHtml({ script, facts, scenes: timeline.scenes, author: "manual" });
+    expect(manual).toContain("報告: 手動で作成。数値はセッションログから自動集計");
+    expect(manual).not.toContain("AI 作成");
   });
 
   it("作業時間の推定があればそれを出し、日をまたぐ期間は月日も表示する", async () => {
     const script = VideoScriptSchema.parse(JSON.parse(await readFile(path.join(fixtures, "script.json"), "utf8")));
     const timeline = await buildTimeline(script, new SilentSynthesizer(), { maxSeconds: 120, speed: 1, maxSpeed: 1.3 });
     const multiDay = { ...facts, endTime: "2026-10-08T03:30:00.000Z", elapsedMinutes: 2 * 24 * 60 + 150, activeMinutes: 95 };
-    const html = buildHtml({ script, facts: multiDay, scenes: timeline.scenes, timeZone: "UTC" });
+    const html = buildHtml({ script, facts: multiDay, scenes: timeline.scenes, author: "agent", timeZone: "UTC" });
     expect(html).toContain("2026/10/01 01:00 – 10/08 03:30");
     expect(html).toContain('<div class="fact-label">作業時間</div><div class="num">1.6<small>時間</small>');
-    const sameDay = buildHtml({ script, facts, scenes: timeline.scenes, timeZone: "UTC" });
+    const sameDay = buildHtml({ script, facts, scenes: timeline.scenes, author: "agent", timeZone: "UTC" });
     expect(sameDay).toContain("2026/10/01 01:00 – 01:42");
     expect(sameDay).toContain('<div class="fact-label">経過</div>');
+  });
+
+  it("タイトルは長さに応じて小さくし、文節の途中での改行を減らす", async () => {
+    const script = VideoScriptSchema.parse(JSON.parse(await readFile(path.join(fixtures, "script.json"), "utf8")));
+    const timeline = await buildTimeline(script, new SilentSynthesizer(), { maxSeconds: 120, speed: 1, maxSpeed: 1.3 });
+    const titleOf = (title: string) =>
+      /<h1 class="enter ([^"]+)"/.exec(buildHtml({ script: { ...script, title }, facts, scenes: timeline.scenes, author: "agent" }))?.[1];
+    expect(titleOf("認証の修正")).toBe("title");
+    // 半角英数は幅を小さく数える
+    expect(titleOf("README と CI の修正")).toBe("title mid");
+    expect(titleOf("作業報告動画ツールのスキル化")).toBe("title mid");
+    expect(titleOf("ログイン画面のバリデーションとエラー表示の修正")).toBe("title long");
   });
 
   it("台本中の HTML やスクリプト終了タグを無害化する", async () => {
@@ -67,7 +79,7 @@ describe("buildHtml", () => {
     script.title = "<img src=x onerror=alert(1)>";
     script.opening.narration = ["</script><script>alert(1)</script>"];
     const timeline = await buildTimeline(script, new SilentSynthesizer(), { maxSeconds: 120, speed: 1, maxSpeed: 1.3 });
-    const html = buildHtml({ script, facts, scenes: timeline.scenes });
+    const html = buildHtml({ script, facts, scenes: timeline.scenes, author: "agent" });
     expect(html).not.toContain("<img src=x");
     expect(html).not.toContain("</script><script>alert(1)");
   });
@@ -109,7 +121,7 @@ describe.runIf(canRender)("renderVideo(結合テスト)", () => {
     const audioFile = path.join(dir, "narration.wav");
     await writeFile(audioFile, encodeWav(timeline.audio));
     const outFile = path.join(dir, "out.mp4");
-    const html = buildHtml({ script, facts, scenes: timeline.scenes, credit: "VOICEVOX:テスト", timeZone: "UTC" });
+    const html = buildHtml({ script, facts, scenes: timeline.scenes, credit: "VOICEVOX:テスト", author: "agent", timeZone: "UTC" });
 
     const stats = await renderVideo(html, { outFile, audioFile, duration: timeline.duration, fps: 8, scale: 0.25 });
 

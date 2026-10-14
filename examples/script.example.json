@@ -1,9 +1,7 @@
 {
   "version": 1,
   "generatedAt": "2026-10-01T01:12:00.000Z",
-  "generator": {
-    "model": "manual"
-  },
+  "author": "manual",
   "facts": {
     "sessionId": "11111111-2222-3333-4444-555555555555",
     "title": "ログイン画面のバリデーション修正",

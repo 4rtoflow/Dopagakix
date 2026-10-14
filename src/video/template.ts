@@ -1,5 +1,5 @@
 import type { FileChange, SessionFacts } from "../facts.js";
-import { type CheckResult, STATUS_LABELS, type ScriptStatus, type VideoScript } from "../script/schema.js";
+import { type Author, type CheckResult, STATUS_LABELS, type ScriptStatus, type VideoScript } from "../script/schema.js";
 import { formatDateTime } from "../util/time.js";
 import type { TimedScene } from "./timeline.js";
 
@@ -11,8 +11,8 @@ export interface TemplateInput {
   facts: SessionFacts;
   scenes: TimedScene[];
   credit?: string;
-  /** 台本を書いたモデル。手書きの台本なら undefined */
-  summarizer?: string;
+  /** 台本の書き手。agent なら作業をした AI エージェント自身 */
+  author: Author;
   timeZone?: string;
 }
 
@@ -65,6 +65,20 @@ const compact = (n: number) =>
 const delta = (sign: "+" | "−", n: number, format = number) =>
   `<span class="${sign === "+" ? "plus" : "minus"}${n === 0 ? " zero" : ""}">${sign}${format(n)}</span>`;
 
+/** 表示幅の目安(全角 1、半角英数 0.55) */
+function visualLength(text: string): number {
+  return [...text].reduce((n, c) => n + (/[\x20-\x7e]/.test(c) ? 0.55 : 1), 0);
+}
+
+/**
+ * タイトルの文字の大きさ。日本語は文節の途中で改行しないようにしている(word-break: auto-phrase)が、
+ * 1 行に収まらない長い文節は途中で折り返されるため、2 行以上になるタイトルは小さめにする。
+ */
+function titleClass(title: string): string {
+  const length = visualLength(title);
+  return length <= 8 ? "title" : length <= 20 ? "title mid" : "title long";
+}
+
 /** 要素の登場順(アニメーションの遅延)を付ける */
 const enter = (cls: string, i: number) => `class="enter ${cls}" style="--i:${i}"`;
 
@@ -85,7 +99,7 @@ function openingScene(script: VideoScript, facts: SessionFacts, timeZone?: strin
   // 同じ日なら終了は時刻だけ、日をまたぐなら月日も付ける("YYYY/MM/DD HH:MM")
   const period = start ? `${start} – ${end.slice(0, 10) === start.slice(0, 10) ? end.slice(11) : end.slice(5)}` : "";
   return `
-    <h1 ${enter(script.title.length > 18 ? "title long" : "title", 0)}>${escapeHtml(script.title)}</h1>
+    <h1 ${enter(titleClass(script.title), 0)}>${escapeHtml(script.title)}</h1>
     <div class="facts">
       <div class="rule rule-in" style="--i:1"></div>
       <div ${enter("fact-row result", 2)} style="--i:2; --status:${status.color}">
@@ -180,7 +194,7 @@ function closingScene(
   script: VideoScript,
   facts: SessionFacts,
   credit: string | undefined,
-  summarizer: string | undefined,
+  author: Author,
   timeZone?: string,
 ): string {
   const items = script.next_steps.items;
@@ -189,10 +203,12 @@ function closingScene(
         .map((item, i) => `<li ${enter("row", i + 1)}><span class="arrow">→</span><span class="row-text">${escapeHtml(item)}</span></li>`)
         .join("")}</ul>`
     : "";
+  const models = facts.models.length > 0 ? `(${facts.models.join("、")})` : "";
   const credits = [
-    summarizer
-      ? `要約: ${summarizer} による自動生成。正確な内容はセッションログで確認してください`
-      : "要約: 手動で作成した台本",
+    // 自己報告であること(成果を良く見せる偏りがありうること)と、数値の出どころを明記する
+    author === "agent"
+      ? `報告: 作業をした AI エージェント${models}による自己報告。数値はセッションログから自動集計`
+      : "報告: 手動で作成。数値はセッションログから自動集計",
     credit ? `音声: ${credit}` : undefined,
     `セッション ${facts.sessionId?.slice(0, 8) ?? "-"} ・ ${formatDateTime(facts.endTime, timeZone) || "-"}`,
   ]
@@ -261,7 +277,8 @@ main { position: absolute; top: 230px; left: 80px; right: 80px; height: 1180px; 
   font-family: var(--serif); font-weight: 900; font-size: calc(104 * var(--u)); line-height: 1.22;
   letter-spacing: -0.005em; font-feature-settings: "palt"; text-wrap: balance;
 }
-.title.long { font-size: calc(84 * var(--u)); }
+.title.mid { font-size: calc(84 * var(--u)); }
+.title.long { font-size: calc(72 * var(--u)); }
 .facts { display: flex; flex-direction: column; gap: calc(26 * var(--u)); }
 .fact-row { display: grid; grid-template-columns: calc(150 * var(--u)) 1fr; gap: calc(24 * var(--u)); align-items: start; }
 .fact-label { font-size: calc(26 * var(--u)); font-weight: 700; color: var(--ink-3); letter-spacing: 0.04em; padding-top: calc(10 * var(--u)); }
@@ -437,21 +454,21 @@ const PAGE_SCRIPT = String.raw`
 
 /** 動画 1 本分のページを作る。フォントは /fonts/ 以下から読み込む前提。 */
 export function buildHtml(input: TemplateInput): string {
-  const { script, facts, scenes, credit, summarizer, timeZone } = input;
+  const { script, facts, scenes, credit, author, timeZone } = input;
   const bodies = {
     opening: openingScene(script, facts, timeZone),
     request: requestScene(script, facts),
     work: workScene(script, facts),
     verification: verificationScene(script),
     decisions: decisionsScene(script),
-    closing: closingScene(script, facts, credit, summarizer, timeZone),
+    closing: closingScene(script, facts, credit, author, timeZone),
   };
   const sections = scenes
     .map((scene) => `<section class="scene" data-kind="${scene.kind}"><div class="content">${bodies[scene.kind]}</div></section>`)
     .join("\n");
   const where = [facts.project, facts.branch].filter(Boolean).join(" ・ ");
   const date = formatDateTime(facts.endTime, timeZone).slice(0, 10).replaceAll("/", ".");
-  const labels = [summarizer ? "AI 要約" : undefined, credit].filter(Boolean).map((l) => `<span>${escapeHtml(l!)}</span>`);
+  const labels = [author === "agent" ? "AI 作成" : undefined, credit].filter(Boolean).map((l) => `<span>${escapeHtml(l!)}</span>`);
   const data = JSON.stringify({ scenes: scenes.map(({ kind, start, end, cues }) => ({ kind, start, end, cues })) }).replace(
     /</g,
     "\\u003c",
