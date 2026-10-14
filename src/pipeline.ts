@@ -125,6 +125,8 @@ export interface SynthesizerOptions {
   voice: boolean;
   speaker: number;
   voicevoxUrl: string;
+  /** クレジット表記の指定(省略時は話者から決める) */
+  credit?: string;
   fetch?: typeof fetch;
 }
 
@@ -141,7 +143,12 @@ export interface SynthesizerChoice {
 export async function createSynthesizer(options: SynthesizerOptions): Promise<SynthesizerChoice> {
   if (!options.voice) return { synth: new SilentSynthesizer() };
   try {
-    const synth = await VoicevoxSynthesizer.create({ baseUrl: options.voicevoxUrl, speaker: options.speaker, fetch: options.fetch });
+    const synth = await VoicevoxSynthesizer.create({
+      baseUrl: options.voicevoxUrl,
+      speaker: options.speaker,
+      credit: options.credit,
+      fetch: options.fetch,
+    });
     return { synth };
   } catch (error) {
     if (!(error instanceof VoicevoxConnectionError)) throw error;

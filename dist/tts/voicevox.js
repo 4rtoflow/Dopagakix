@@ -54,6 +54,21 @@ export class VoicevoxClient {
         return Buffer.from(await response.arrayBuffer());
     }
 }
+/**
+ * 音声ライブラリの規約が、話者名と異なる書式のクレジットを求めているもの
+ * (VOICEVOX 音声モデル 利用規約 https://github.com/VOICEVOX/voicevox_vvm 、2026-10-14 確認)。
+ * キーはエンジンの /speakers が返す話者名。
+ */
+export const CREDIT_OVERRIDES = {
+    もち子さん: "VOICEVOX:もち子(cv 明日葉よもぎ)",
+    Voidoll: "VOICEVOX:Voidoll(CV:丹下桜)",
+    ユーレイちゃん: "VOICEVOX:ユーレイちゃん(CV:神崎零)",
+    里石ユカ: "VOICEVOX:里石ユカ（つぼみ）",
+};
+/** VOICEVOX の利用規約と音声ライブラリの規約で求められるクレジット表記 */
+export function creditFor(speakerName) {
+    return CREDIT_OVERRIDES[speakerName] ?? `VOICEVOX:${speakerName}`;
+}
 export class VoicevoxSynthesizer {
     client;
     speaker;
@@ -73,8 +88,7 @@ export class VoicevoxSynthesizer {
             throw new VoicevoxError(`話者 ID ${speaker} はこのエンジンにありません。\`dopagakix speakers\` で一覧を確認してください。`);
         }
         await client.initializeSpeaker(speaker);
-        // VOICEVOX の利用規約で求められるクレジット表記
-        return new VoicevoxSynthesizer(client, speaker, `VOICEVOX:${owner.name}`);
+        return new VoicevoxSynthesizer(client, speaker, options.credit ?? creditFor(owner.name));
     }
     async synthesize(text, speed) {
         const query = await this.client.audioQuery(text, this.speaker);

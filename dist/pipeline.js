@@ -90,7 +90,12 @@ export async function createSynthesizer(options) {
     if (!options.voice)
         return { synth: new SilentSynthesizer() };
     try {
-        const synth = await VoicevoxSynthesizer.create({ baseUrl: options.voicevoxUrl, speaker: options.speaker, fetch: options.fetch });
+        const synth = await VoicevoxSynthesizer.create({
+            baseUrl: options.voicevoxUrl,
+            speaker: options.speaker,
+            credit: options.credit,
+            fetch: options.fetch,
+        });
         return { synth };
     }
     catch (error) {
