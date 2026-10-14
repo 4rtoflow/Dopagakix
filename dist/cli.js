@@ -58,6 +58,9 @@ function withVoiceOptions(command) {
         .default("auto")
         .env("DOPAGAKIX_PERSONA"));
 }
+function withCreditOption(command) {
+    return command.addOption(new Option("--credit <text>", "動画に表示する音声のクレジット表記。省略時は話者から決める(音声ライブラリの規約で書式が決まっているものは規約どおり)").env("DOPAGAKIX_CREDIT"));
+}
 function withSecondsOption(command) {
     return command.option("--seconds <n>", "動画の長さの目安(秒)。読み上げ文の文字数の目安と、話速の調整に使う", positiveNumber, DEFAULT_SECONDS);
 }
@@ -108,9 +111,9 @@ const program = new Command()
     .name("dopagakix")
     .description("AI エージェントが書いた作業報告の台本から、指示者向けの縦型動画を作る")
     .version(version);
-withSecondsOption(withVoiceOptions(withSessionOptions(program
+withCreditOption(withSecondsOption(withVoiceOptions(withSessionOptions(program
     .command("prepare")
-    .description("動画レポートの準備。出力先を作り、台本を書くのに必要な情報(画面に出る数値・口調・長さ・環境)を表示する"))))
+    .description("動画レポートの準備。出力先を作り、台本を書くのに必要な情報(画面に出る数値・口調・長さ・環境)を表示する")))))
     .option("--out-dir <dir>", "出力先の親ディレクトリ(中身は git の管理対象から外す)", DEFAULT_OUT_DIR)
     .option("--timezone <tz>", "時刻表示のタイムゾーン(例: Asia/Tokyo)。省略時は実行環境の設定")
     .option("--chromium <path>", "描画に使う Chromium の実行ファイル")
@@ -137,7 +140,7 @@ withSecondsOption(withVoiceOptions(withSessionOptions(program
             report,
             ...shared,
             ...timezone,
-            ...explicitArgs(command, flags, ["chromium"]),
+            ...explicitArgs(command, flags, ["credit", "chromium"]),
         ]),
         digestCommand: commandLine(["dopagakix", "digest", ...session, ...timezone, "-o", displayPath(path.join(runDir, "digest.md"))]),
         persona,
@@ -177,10 +180,10 @@ withSecondsOption(withVoiceOptions(withSessionOptions(program
     ];
     process.stdout.write(`${lines.join("\n")}\n`);
 });
-withRenderOptions(withSecondsOption(withVoiceOptions(withSessionOptions(program
+withCreditOption(withRenderOptions(withSecondsOption(withVoiceOptions(withSessionOptions(program
     .command("render")
     .description("台本から動画を作る。画面の数値はセッションログから集計する")
-    .argument("<report>", "台本(report.json)、または描画済みの script.json(記録された数値で描画し直す)")))))
+    .argument("<report>", "台本(report.json)、または描画済みの script.json(記録された数値で描画し直す)"))))))
     .option("-o, --out <file>", "動画の出力先(既定: 台本と同じ場所の summary.mp4)")
     .option("--timezone <tz>", "時刻表示のタイムゾーン(例: Asia/Tokyo)。省略時は実行環境の設定")
     .action(async (reportPath, flags) => {

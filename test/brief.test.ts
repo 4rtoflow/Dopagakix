@@ -71,7 +71,7 @@ describe("checkEnvironment", () => {
       (await checkEnvironment({ ...base, ...options })).find((item) => item.name === "読み上げ");
     expect(await voice({ voice: true, speaker: 3, fetch: engine })).toMatchObject({
       status: "ok",
-      detail: "VOICEVOX:ずんだもん(ノーマル、スタイル ID 3)",
+      detail: "ずんだもん(ノーマル、スタイル ID 3)。クレジット表記「VOICEVOX:ずんだもん」",
     });
     expect(await voice({ voice: true, speaker: 3, fetch: unreachable })).toMatchObject({ status: "degraded" });
     expect(await voice({ voice: true, speaker: 13, fetch: engine })).toMatchObject({ status: "missing" });

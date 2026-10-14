@@ -2,7 +2,7 @@ import { spawnSync } from "node:child_process";
 import type { SessionFacts } from "./facts.js";
 import type { Persona } from "./persona.js";
 import { narrationBudget, SENTENCE_LIMIT } from "./script/check.js";
-import { VoicevoxClient } from "./tts/voicevox.js";
+import { creditFor, VoicevoxClient } from "./tts/voicevox.js";
 import { formatDateTime } from "./util/time.js";
 import { resolveChromium } from "./video/browser.js";
 
@@ -17,6 +17,8 @@ export interface EnvironmentOptions {
   voice: boolean;
   speaker: number;
   voicevoxUrl: string;
+  /** クレジット表記の指定(省略時は話者から決める) */
+  credit?: string;
   chromium?: string;
   fetch?: typeof fetch;
 }
@@ -34,7 +36,11 @@ export async function checkEnvironment(options: EnvironmentOptions): Promise<Env
       const style = owner?.styles.find((s) => s.id === options.speaker);
       items.push(
         owner && style
-          ? { name: "読み上げ", status: "ok", detail: `VOICEVOX:${owner.name}(${style.name}、スタイル ID ${options.speaker})` }
+          ? {
+              name: "読み上げ",
+              status: "ok",
+              detail: `${owner.name}(${style.name}、スタイル ID ${options.speaker})。クレジット表記「${options.credit ?? creditFor(owner.name)}」`,
+            }
           : {
               name: "読み上げ",
               status: "missing",

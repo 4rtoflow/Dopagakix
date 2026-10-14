@@ -1,6 +1,6 @@
 import { spawnSync } from "node:child_process";
 import { narrationBudget, SENTENCE_LIMIT } from "./script/check.js";
-import { VoicevoxClient } from "./tts/voicevox.js";
+import { creditFor, VoicevoxClient } from "./tts/voicevox.js";
 import { formatDateTime } from "./util/time.js";
 import { resolveChromium } from "./video/browser.js";
 /** 描画に必要なもの(VOICEVOX・Chromium・ffmpeg)がそろっているかを、台本を書く前に確かめる。 */
@@ -15,7 +15,11 @@ export async function checkEnvironment(options) {
             const owner = speakers.find((s) => s.styles.some((style) => style.id === options.speaker));
             const style = owner?.styles.find((s) => s.id === options.speaker);
             items.push(owner && style
-                ? { name: "読み上げ", status: "ok", detail: `VOICEVOX:${owner.name}(${style.name}、スタイル ID ${options.speaker})` }
+                ? {
+                    name: "読み上げ",
+                    status: "ok",
+                    detail: `${owner.name}(${style.name}、スタイル ID ${options.speaker})。クレジット表記「${options.credit ?? creditFor(owner.name)}」`,
+                }
                 : {
                     name: "読み上げ",
                     status: "missing",

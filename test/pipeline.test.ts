@@ -97,6 +97,9 @@ describe("createSynthesizer", () => {
     expect(fallback.synth).toBeInstanceOf(SilentSynthesizer);
     expect(fallback.fallback).toMatch(/接続できないため、字幕のみ/);
 
+    const credited = await createSynthesizer({ ...base, voice: true, credit: "VOICEVOX:指定した表記", fetch: engine });
+    expect(credited.synth.credit).toBe("VOICEVOX:指定した表記");
+
     const silent = await createSynthesizer({ ...base, voice: false, fetch: unreachable });
     expect(silent).toEqual({ synth: expect.any(SilentSynthesizer) });
   });

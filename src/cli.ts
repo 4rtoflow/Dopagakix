@@ -94,6 +94,15 @@ function withVoiceOptions(command: Command): Command {
     );
 }
 
+function withCreditOption(command: Command): Command {
+  return command.addOption(
+    new Option(
+      "--credit <text>",
+      "動画に表示する音声のクレジット表記。省略時は話者から決める(音声ライブラリの規約で書式が決まっているものは規約どおり)",
+    ).env("DOPAGAKIX_CREDIT"),
+  );
+}
+
 function withSecondsOption(command: Command): Command {
   return command.option("--seconds <n>", "動画の長さの目安(秒)。読み上げ文の文字数の目安と、話速の調整に使う", positiveNumber, DEFAULT_SECONDS);
 }
@@ -152,14 +161,17 @@ const program = new Command()
   .description("AI エージェントが書いた作業報告の台本から、指示者向けの縦型動画を作る")
   .version(version);
 
-type PrepareFlags = SessionFlags & VoiceFlags & { seconds: number; outDir: string; timezone?: string; chromium?: string };
+type PrepareFlags = SessionFlags &
+  VoiceFlags & { credit?: string; seconds: number; outDir: string; timezone?: string; chromium?: string };
 
-withSecondsOption(
-  withVoiceOptions(
-    withSessionOptions(
-      program
-        .command("prepare")
-        .description("動画レポートの準備。出力先を作り、台本を書くのに必要な情報(画面に出る数値・口調・長さ・環境)を表示する"),
+withCreditOption(
+  withSecondsOption(
+    withVoiceOptions(
+      withSessionOptions(
+        program
+          .command("prepare")
+          .description("動画レポートの準備。出力先を作り、台本を書くのに必要な情報(画面に出る数値・口調・長さ・環境)を表示する"),
+      ),
     ),
   ),
 )
@@ -192,7 +204,7 @@ withSecondsOption(
           report,
           ...shared,
           ...timezone,
-          ...explicitArgs(command, flags, ["chromium"]),
+          ...explicitArgs(command, flags, ["credit", "chromium"]),
         ]),
         digestCommand: commandLine(["dopagakix", "digest", ...session, ...timezone, "-o", displayPath(path.join(runDir, "digest.md"))]),
         persona,
@@ -241,16 +253,20 @@ withSecondsOption(
   process.stdout.write(`${lines.join("\n")}\n`);
 });
 
-type RenderCommandFlags = SessionFlags & VoiceFlags & RenderFlags & { out?: string; seconds: number; timezone?: string };
+type RenderCommandFlags = SessionFlags &
+  VoiceFlags &
+  RenderFlags & { credit?: string; out?: string; seconds: number; timezone?: string };
 
-withRenderOptions(
-  withSecondsOption(
-    withVoiceOptions(
-      withSessionOptions(
-        program
-          .command("render")
-          .description("台本から動画を作る。画面の数値はセッションログから集計する")
-          .argument("<report>", "台本(report.json)、または描画済みの script.json(記録された数値で描画し直す)"),
+withCreditOption(
+  withRenderOptions(
+    withSecondsOption(
+      withVoiceOptions(
+        withSessionOptions(
+          program
+            .command("render")
+            .description("台本から動画を作る。画面の数値はセッションログから集計する")
+            .argument("<report>", "台本(report.json)、または描画済みの script.json(記録された数値で描画し直す)"),
+        ),
       ),
     ),
   ),

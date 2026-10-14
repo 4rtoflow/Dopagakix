@@ -4,7 +4,7 @@
   "description": "AI エージェント(Claude Code)が書いた作業報告から、指示者向けの縦型動画(9:16 mp4)を作る CLI とスキル",
   "type": "module",
   "private": true,
-  "license": "UNLICENSED",
+  "license": "MIT",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/4rtoflow/Dopagakix.git"

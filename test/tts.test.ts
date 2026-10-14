@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { SilentSynthesizer } from "../src/tts/silent.js";
 import type { Synthesizer } from "../src/tts/types.js";
-import { DEFAULT_VOICEVOX_URL, VoicevoxError, VoicevoxSynthesizer } from "../src/tts/voicevox.js";
+import { creditFor, DEFAULT_VOICEVOX_URL, VoicevoxError, VoicevoxSynthesizer } from "../src/tts/voicevox.js";
 import { durationOf, encodeWav, mixInto, parseWav, silence } from "../src/tts/wav.js";
 
 describe("wav", () => {
@@ -34,6 +34,15 @@ describe("SilentSynthesizer", () => {
     expect(normal).toBeCloseTo(4.4, 2);
     expect(fast).toBe(normal);
     expect(durationOf(await synth.synthesize("短い", 1))).toBe(1.6);
+  });
+});
+
+describe("creditFor", () => {
+  it("規約で書式が決まっている話者以外は「VOICEVOX:話者名」にする", () => {
+    expect(creditFor("ずんだもん")).toBe("VOICEVOX:ずんだもん");
+    expect(creditFor("Voidoll")).toBe("VOICEVOX:Voidoll(CV:丹下桜)");
+    expect(creditFor("ユーレイちゃん")).toBe("VOICEVOX:ユーレイちゃん(CV:神崎零)");
+    expect(creditFor("里石ユカ")).toBe("VOICEVOX:里石ユカ（つぼみ）");
   });
 });
 
@@ -72,6 +81,17 @@ describe("VoicevoxSynthesizer", () => {
     expect(query.url.searchParams.get("text")).toBe("TypeScriptで実装しました。");
     const synthesis = requests.find((r) => r.url.pathname === "/synthesis")!;
     expect(JSON.parse(String(synthesis.init?.body))).toMatchObject({ speedScale: 1.2, prePhonemeLength: 0.05 });
+  });
+
+  it("音声ライブラリの規約で書式が決まっている話者は、規約どおりのクレジットにする", async () => {
+    const engine = (async (input: URL | RequestInfo) => {
+      const url = new URL(String(input));
+      if (url.pathname === "/speakers") return Response.json([{ name: "もち子さん", speaker_uuid: "m", styles: [{ name: "ノーマル", id: 20 }] }]);
+      return new Response(null, { status: 204 });
+    }) as typeof fetch;
+    expect((await VoicevoxSynthesizer.create({ speaker: 20, fetch: engine })).credit).toBe("VOICEVOX:もち子(cv 明日葉よもぎ)");
+    // 規約が変わった場合などに備え、指定で上書きできる
+    expect((await VoicevoxSynthesizer.create({ speaker: 20, credit: "VOICEVOX:別表記", fetch: engine })).credit).toBe("VOICEVOX:別表記");
   });
 
   it("存在しない話者や接続失敗を分かりやすく伝える", async () => {
