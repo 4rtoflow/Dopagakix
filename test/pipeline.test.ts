@@ -1,4 +1,3 @@
-import { execFileSync } from "node:child_process";
 import { existsSync } from "node:fs";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
@@ -10,7 +9,7 @@ import { ScriptFileSchema } from "../src/script/schema.js";
 import { SilentSynthesizer } from "../src/tts/silent.js";
 import { VoicevoxSynthesizer } from "../src/tts/voicevox.js";
 import { encodeWav, silence } from "../src/tts/wav.js";
-import { resolveChromium } from "../src/video/browser.js";
+import { canRender } from "./support.js";
 
 const root = path.dirname(fileURLToPath(import.meta.url));
 const fixtures = path.join(root, "fixtures");
@@ -120,17 +119,6 @@ describe("prepareOutputRoot", () => {
     expect(await readFile(path.join(out, ".gitignore"), "utf8")).toBe("custom\n");
   });
 });
-
-function available(check: () => void): boolean {
-  try {
-    check();
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-const canRender = available(() => resolveChromium()) && available(() => execFileSync("ffmpeg", ["-version"], { stdio: "ignore" }));
 
 describe.runIf(canRender)("renderReport(結合テスト)", () => {
   it("動画と、描画し直すための script.json を書き出す", async () => {

@@ -1,0 +1,137 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  # main 以外は、新しい push があれば古い実行を取り消す
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+env:
+  VOICEVOX_IMAGE: voicevox/voicevox_engine:cpu-0.25.2
+
+jobs:
+  test:
+    name: テスト (Node.js ${{ matrix.node }})
+    # 同じリポジトリのブランチは push で実行するので、pull_request ではフォークからの PR だけを実行する
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        node: [22, 24, 26]
+    env:
+      # 描画の結合テストを省略させない
+      DOPAGAKIX_TEST_REQUIRE_RENDER: "1"
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v7
+        with:
+          node-version: ${{ matrix.node }}
+          cache: npm
+      - run: npm ci
+      - name: 描画に使う Chromium と ffmpeg を入れる
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends ffmpeg
+          npx playwright-core install --with-deps --only-shell chromium
+      - run: npm run typecheck
+      - run: npm test
+
+  package:
+    name: git からの導入
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+      - name: 利用者と同じ経路(git から npm install -g)で導入する
+        run: npm install -g "git+file://$GITHUB_WORKSPACE"
+      - name: 描画に使う Chromium と ffmpeg を入れる
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends ffmpeg
+          node "$(npm root -g)/dopagakix/node_modules/playwright-core/cli.js" install --with-deps --only-shell chromium
+      - name: コマンドとスキルの導入を確かめる
+        run: |
+          dopagakix --version
+          dopagakix install-skill -p "$RUNNER_TEMP/project"
+          test -f "$RUNNER_TEMP/project/.claude/skills/video-report/SKILL.md"
+      - name: 同梱のサンプルから動画を作る
+        run: |
+          out="$RUNNER_TEMP/sample/summary.mp4"
+          dopagakix render "$(npm root -g)/dopagakix/examples/script.example.json" --no-voice --fps 2 -o "$out"
+          streams=$(ffprobe -v error -show_entries stream=codec_name,width,height -of csv=p=0 "$out")
+          echo "$streams"
+          grep -q "^h264,1080,1920" <<< "$streams"
+
+  voicevox:
+    name: VOICEVOX との結合
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      DOPAGAKIX_TEST_REQUIRE_VOICEVOX: "1"
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - name: VOICEVOX ENGINE を起動する
+        run: |
+          docker run -d --name voicevox -p 127.0.0.1:50021:50021 "$VOICEVOX_IMAGE"
+          for _ in $(seq 1 90); do
+            if curl -fsS http://127.0.0.1:50021/version; then echo; exit 0; fi
+            sleep 2
+          done
+          docker logs voicevox
+          exit 1
+      - name: 描画に使う Chromium と ffmpeg を入れる
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends ffmpeg
+          npx playwright-core install --with-deps --only-shell chromium
+      - name: 実エンジンを使うテスト
+        run: npx vitest run test/tts.test.ts test/environment.test.ts
+      - name: 読み上げ付きの動画を作る
+        run: |
+          out="$RUNNER_TEMP/voiced/summary.mp4"
+          node dist/cli.js render examples/script.example.json --fps 4 -o "$out"
+          audio=$(ffprobe -v error -select_streams a -show_entries stream=codec_name -of csv=p=0 "$out")
+          echo "音声: $audio"
+          test "$audio" = "aac"
+          # 無音でないこと(読み上げが入っていること)を音量で確かめる
+          volume=$(ffmpeg -hide_banner -i "$out" -af volumedetect -f null - 2>&1 | sed -n 's/.*max_volume: \(.*\) dB/\1/p')
+          echo "最大音量: $volume dB"
+          test -n "$volume"
+          awk -v v="$volume" 'BEGIN { exit !(v > -40) }'
+      - name: 作った動画を保存する
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: voiced-sample
+          path: ${{ runner.temp }}/voiced/summary.mp4
+          retention-days: 7
+          if-no-files-found: ignore
+      - name: エンジンのログ
+        if: failure()
+        run: docker logs voicevox

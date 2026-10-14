@@ -28,6 +28,13 @@ describe("dist/", () => {
     if (out) await rm(out, { recursive: true, force: true });
   });
 
+  it("npm が git から導入するときに、準備処理(導入前のビルド)を始めるスクリプトを持たない", async () => {
+    const pkg = JSON.parse(await readFile(path.join(root, "package.json"), "utf8")) as { scripts?: Record<string, string> };
+    // npm の取得処理(pacote の lib/git.js)は、これらのスクリプトがあると導入前に依存関係を入れて準備しようとする
+    const triggers = ["build", "preinstall", "install", "postinstall", "prepack", "prepare"];
+    expect(Object.keys(pkg.scripts ?? {}).filter((name) => triggers.includes(name))).toEqual([]);
+  });
+
   it("ソースからビルドした結果と一致する(違う場合は npm run compile してコミットする)", async () => {
     out = await mkdtemp(path.join(os.tmpdir(), "dopagakix-dist-"));
     const tsc = path.join(root, "node_modules", ".bin", process.platform === "win32" ? "tsc.cmd" : "tsc");
