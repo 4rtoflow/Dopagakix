@@ -1,8 +1,9 @@
 import { describe, expect, it } from "vitest";
 import { SilentSynthesizer } from "../src/tts/silent.js";
 import type { Synthesizer } from "../src/tts/types.js";
-import { creditFor, DEFAULT_VOICEVOX_URL, VoicevoxError, VoicevoxSynthesizer } from "../src/tts/voicevox.js";
+import { creditFor, VoicevoxError, VoicevoxSynthesizer } from "../src/tts/voicevox.js";
 import { durationOf, encodeWav, mixInto, parseWav, silence } from "../src/tts/wav.js";
+import { voicevoxAvailable, voicevoxUrl } from "./support.js";
 
 describe("wav", () => {
   it("PCM を書き出して読み戻せる", () => {
@@ -104,15 +105,10 @@ describe("VoicevoxSynthesizer", () => {
   });
 });
 
-// 実エンジンが動いている環境でだけ実行する(例: docker run -p 50021:50021 voicevox/voicevox_engine:cpu-latest)
-const engineUrl = process.env.VOICEVOX_URL ?? DEFAULT_VOICEVOX_URL;
-const engineAvailable = await fetch(new URL("/version", engineUrl), { signal: AbortSignal.timeout(1000) })
-  .then((r) => r.ok)
-  .catch(() => false);
-
-describe.runIf(engineAvailable)("VOICEVOX エンジン(実機)", () => {
+// 実エンジンが動いている環境でだけ実行する
+describe.runIf(voicevoxAvailable)("VOICEVOX エンジン(実機)", () => {
   it("日本語の文を音声にできる", async () => {
-    const synth = await VoicevoxSynthesizer.create({ baseUrl: engineUrl });
+    const synth = await VoicevoxSynthesizer.create({ baseUrl: voicevoxUrl });
     const pcm = await synth.synthesize("テストは全て成功しました。", 1.15);
     expect(pcm.sampleRate).toBe(24_000);
     expect(durationOf(pcm)).toBeGreaterThan(1);

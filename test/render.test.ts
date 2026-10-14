@@ -8,10 +8,10 @@ import type { SessionFacts } from "../src/facts.js";
 import { VideoScriptSchema } from "../src/script/schema.js";
 import { SilentSynthesizer } from "../src/tts/silent.js";
 import { encodeWav } from "../src/tts/wav.js";
-import { resolveChromium } from "../src/video/browser.js";
 import { renderVideo } from "../src/video/render.js";
 import { buildHtml, escapeHtml, shortenPath } from "../src/video/template.js";
 import { buildTimeline } from "../src/video/timeline.js";
+import { canRender } from "./support.js";
 
 const fixtures = path.join(path.dirname(fileURLToPath(import.meta.url)), "fixtures");
 
@@ -93,18 +93,6 @@ describe("template helpers", () => {
     expect(shortenPath("x".repeat(50), 20)).toHaveLength(20);
   });
 });
-
-function toolAvailable(check: () => void): boolean {
-  try {
-    check();
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-const canRender =
-  toolAvailable(() => resolveChromium()) && toolAvailable(() => execFileSync("ffmpeg", ["-version"], { stdio: "ignore" }));
 
 describe.runIf(canRender)("renderVideo(結合テスト)", () => {
   let dir: string;

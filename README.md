@@ -1,5 +1,7 @@
 # Dopagakix
 
+[![CI](https://github.com/4rtoflow/Dopagakix/actions/workflows/ci.yml/badge.svg)](https://github.com/4rtoflow/Dopagakix/actions/workflows/ci.yml)
+
 AI エージェント(Claude Code)が自分の行った作業を、作業を指示した人(指示者)に **縦型動画**(1080×1920、mp4)で報告するための、Claude Code のスキルと CLI です。
 
 指示者がスマートフォンで短時間に次の 3 点を把握できることを目的にしています。
@@ -238,6 +240,18 @@ npm link             # 開発中の版を dopagakix コマンドとして使う
 
 このリポジトリ自体にも `.claude/skills/video-report/` があるため、ここで Claude Code を使えばスキルを試せます。
 
+### CI
+
+GitHub Actions(`.github/workflows/ci.yml`)で、push のたびに次の 3 つを実行します。フォークからの pull request でも実行します。
+
+| ジョブ | 内容 |
+|--------|------|
+| テスト | Node.js 22・24・26 で型検査と `npm test`。Chromium と ffmpeg を入れ、描画の結合テストを省略させない |
+| git からの導入 | 利用者と同じく git から `npm install -g` で導入し、スキルの導入と同梱サンプルの描画を確かめる |
+| VOICEVOX との結合 | VOICEVOX ENGINE(Docker イメージ `cpu-0.25.2`)を起動し、実エンジンのテストと読み上げ付きの動画の作成を行う。作った動画は成果物として 7 日間保存する |
+
+結合テストは、必要な道具がない環境では省略されます。CI では環境変数 `DOPAGAKIX_TEST_REQUIRE_RENDER` / `DOPAGAKIX_TEST_REQUIRE_VOICEVOX` を `1` にして、準備に失敗したときに省略されたまま成功に見えないようにしています。
+
 ```
 src/
 ├── cli.ts                 コマンドの定義
@@ -253,6 +267,7 @@ src/
 └── video/                 タイムライン・HTML テンプレート・描画
 dist/                      ビルド済みの CLI(npm run compile で更新し、コミットする)
 .claude/skills/video-report/  エージェント用のスキル(npm パッケージにも同梱)
+.github/workflows/ci.yml   CI(GitHub Actions)
 .claude/skills/ui-ux-pro-max/ UI/UX Pro Max スキル(npm ui-ux-pro-max-cli 2.15.0、MIT。デザインの検討用)
 test/                      vitest のテストと合成フィクスチャ
 examples/                  スキルを使わずに render を試すためのサンプル
