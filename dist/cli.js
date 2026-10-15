@@ -6,7 +6,7 @@ import path from "node:path";
 import { Command, InvalidArgumentError, Option } from "commander";
 import { buildBrief, checkEnvironment } from "./brief.js";
 import { personaMismatch, resolvePersona } from "./persona.js";
-import { createSynthesizer, DEFAULT_OUT_DIR, digestSession, loadReport, loadSession, prepareOutputRoot, renderReport, } from "./pipeline.js";
+import { createSynthesizer, DEFAULT_OUT_DIR, digestSession, loadReport, loadSession, prepareOutputRoot, renderReport, resolveRenderPaths, } from "./pipeline.js";
 import { checkScript } from "./script/check.js";
 import { STATUS_LABELS } from "./script/schema.js";
 import { installSkill, SKILL_NAME, skillsDir } from "./skill.js";
@@ -61,6 +61,9 @@ function withVoiceOptions(command) {
 function withCreditOption(command) {
     return command.addOption(new Option("--credit <text>", "動画に表示する音声のクレジット表記。省略時は話者から決める(音声ライブラリの規約で書式が決まっているものは規約どおり)").env("DOPAGAKIX_CREDIT"));
 }
+function withVideoDirOption(command) {
+    return command.addOption(new Option("--video-dir <dir>", "完成した動画だけを置くフォルダ。動画の名前は「台本のフォルダ名-タイトル.mp4」になり、作業ファイルは台本と同じ場所に残す").env("DOPAGAKIX_VIDEO_DIR"));
+}
 function withSecondsOption(command) {
     return command.option("--seconds <n>", "動画の長さの目安(秒)。読み上げ文の文字数の目安と、話速の調整に使う", positiveNumber, DEFAULT_SECONDS);
 }
@@ -111,9 +114,9 @@ const program = new Command()
     .name("dopagakix")
     .description("AI エージェントが書いた作業報告の台本から、指示者向けの縦型動画を作る")
     .version(version);
-withCreditOption(withSecondsOption(withVoiceOptions(withSessionOptions(program
+withVideoDirOption(withCreditOption(withSecondsOption(withVoiceOptions(withSessionOptions(program
     .command("prepare")
-    .description("動画レポートの準備。出力先を作り、台本を書くのに必要な情報(画面に出る数値・口調・長さ・環境)を表示する")))))
+    .description("動画レポートの準備。出力先を作り、台本を書くのに必要な情報(画面に出る数値・口調・長さ・環境)を表示する"))))))
     .option("--out-dir <dir>", "出力先の親ディレクトリ(中身は git の管理対象から外す)", DEFAULT_OUT_DIR)
     .option("--timezone <tz>", "時刻表示のタイムゾーン(例: Asia/Tokyo)。省略時は実行環境の設定")
     .option("--chromium <path>", "描画に使う Chromium の実行ファイル")
@@ -140,7 +143,7 @@ withCreditOption(withSecondsOption(withVoiceOptions(withSessionOptions(program
             report,
             ...shared,
             ...timezone,
-            ...explicitArgs(command, flags, ["credit", "chromium"]),
+            ...explicitArgs(command, flags, ["credit", "chromium", "videoDir"]),
         ]),
         digestCommand: commandLine(["dopagakix", "digest", ...session, ...timezone, "-o", displayPath(path.join(runDir, "digest.md"))]),
         persona,
@@ -180,11 +183,11 @@ withSecondsOption(withVoiceOptions(withSessionOptions(program
     ];
     process.stdout.write(`${lines.join("\n")}\n`);
 });
-withCreditOption(withRenderOptions(withSecondsOption(withVoiceOptions(withSessionOptions(program
+withVideoDirOption(withCreditOption(withRenderOptions(withSecondsOption(withVoiceOptions(withSessionOptions(program
     .command("render")
     .description("台本から動画を作る。画面の数値はセッションログから集計する")
-    .argument("<report>", "台本(report.json)、または描画済みの script.json(記録された数値で描画し直す)"))))))
-    .option("-o, --out <file>", "動画の出力先(既定: 台本と同じ場所の summary.mp4)")
+    .argument("<report>", "台本(report.json)、または描画済みの script.json(記録された数値で描画し直す)")))))))
+    .option("-o, --out <file>", "動画の出力先。作業ファイルも同じ場所に置き、--video-dir より優先する(既定: 台本と同じ場所の summary.mp4)")
     .option("--timezone <tz>", "時刻表示のタイムゾーン(例: Asia/Tokyo)。省略時は実行環境の設定")
     .action(async (reportPath, flags) => {
     const report = await loadReport(reportPath);
@@ -208,10 +211,14 @@ withCreditOption(withRenderOptions(withSecondsOption(withVoiceOptions(withSessio
     const { synth, fallback } = await createSynthesizer(flags);
     if (fallback)
         log(`注意: ${fallback}`);
-    const outFile = path.resolve(flags.out ?? path.join(path.dirname(reportPath), "summary.mp4"));
-    // narration.wav・timeline.json・script.json は動画と同じ場所に置く
-    const workDir = path.dirname(outFile);
+    const { outFile, workDir } = resolveRenderPaths({
+        report: reportPath,
+        title: report.script.title,
+        out: flags.out,
+        videoDir: flags.videoDir,
+    });
     await mkdir(workDir, { recursive: true });
+    await mkdir(path.dirname(outFile), { recursive: true });
     const result = await renderReport({
         script: report.script,
         facts,
@@ -232,8 +239,9 @@ withCreditOption(withRenderOptions(withSecondsOption(withVoiceOptions(withSessio
     });
     log(`完了: ${result.outFile}(${result.duration.toFixed(1)} 秒、話速 ${result.speed}` +
         `、撮影 ${result.stats.captured}/${result.stats.frames} フレーム)`);
-    if (fallback)
-        log("注意: 読み上げなし(字幕のみ)で作成しました。");
+    if (fallback) {
+        log(`注意: 読み上げなし(字幕のみ)で作成しました。描画し直すには: ${commandLine(["dopagakix", "render", displayPath(result.scriptFile)])}`);
+    }
     if (result.credit)
         log(`クレジット表記: ${result.credit}(VOICEVOX の利用規約により必要です)`);
     process.stdout.write(`${result.outFile}\n`);

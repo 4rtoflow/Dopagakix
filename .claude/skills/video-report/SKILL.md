@@ -26,7 +26,7 @@ allowed-tools: Bash(dopagakix *)
 4. **確認**: prepare が示す `dopagakix check ...` を実行する。警告が出たら台本を直し、もう一度確かめる。意図して残す警告(製品名をそのまま読ませたい、など)は残してよい。
 5. **描画**: prepare が示す `dopagakix render ...` を実行する。1〜3 分かかる。成功すると標準出力の最後の行に mp4 のパスが出る。
 6. **報告**: mp4 を指示者に渡す。ファイルを送るツールがあればそれで送り、なければパスを伝える。動画の内容を文章で長々と繰り返さない。
-   - render が「字幕のみで作成」と出した場合は、そのことと、VOICEVOX を起動してから `dopagakix render <動画と同じ場所の script.json>` を実行すれば読み上げ付きで作り直せることを伝える。
+   - render が「字幕のみで作成」と出した場合は、そのことと、VOICEVOX を起動してから render が表示する作り直しのコマンド(`dopagakix render <script.json>`)を実行すれば読み上げ付きで作り直せることを伝える。
 
 別のセッションの作業を動画にするよう頼まれた場合は、`dopagakix sessions` で ID を調べ、prepare に `--session <ID>` を付ける。そのセッションの記憶はないので、必ず digest を読んでから書く。
 

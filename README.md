@@ -104,9 +104,11 @@ Claude Code で作業を終えたら、「動画で報告して」「動画に�
 | `script.json` | 描画に使った台本と数値の記録。`dopagakix render <この script.json>` で同じ内容のまま作り直せます(話者を変える、など) |
 | `narration.wav` | 読み上げ音声 |
 | `timeline.json` | シーンと字幕の時刻 |
-| `summary.mp4` | 完成した動画 |
+| `summary.mp4` | 完成した動画(動画の保存先を設定したときは作らず、保存先に置きます) |
 
-VOICEVOX に接続できない場合は、作業を止めずに字幕のみで作り、その旨を表示します。あとでエンジンを起動して `script.json` を `render` すれば、読み上げ付きに作り直せます。
+完成した動画だけを 1 つのフォルダに集めたいときは、動画の保存先(環境変数 `DOPAGAKIX_VIDEO_DIR`、または `--video-dir`)を設定します。動画は `<保存先>/<日時>-<セッション ID 先頭 8 桁>-<タイトル>.mp4` になり、それ以外のファイルは上のフォルダに残ります。名前の前半が作業ファイルのフォルダと同じなので、対応する `script.json` を探せます。
+
+VOICEVOX に接続できない場合は、作業を止めずに字幕のみで作り、その旨と作り直しのコマンドを表示します。あとでエンジンを起動して `script.json` を `render` すれば、読み上げ付きに作り直せます。
 
 ### 設定
 
@@ -117,6 +119,7 @@ VOICEVOX に接続できない場合は、作業を止めずに字幕のみで�
 | `DOPAGAKIX_SPEAKER` | `3` | VOICEVOX の話者(スタイル)ID。`dopagakix speakers` で一覧(3 = ずんだもん ノーマル) |
 | `DOPAGAKIX_PERSONA` | `auto` | 読み上げ文の口調。`auto`(話者から判断)/ `none`(丁寧語)/ `zundamon` / 口調設定の JSON ファイル |
 | `VOICEVOX_URL` | `http://127.0.0.1:50021` | VOICEVOX エンジンの URL |
+| `DOPAGAKIX_VIDEO_DIR` | (なし) | 完成した動画だけを置くフォルダ。先頭の `~` はホームフォルダに置き換えます |
 | `TZ` | 実行環境の設定 | 画面の日時表示のタイムゾーン(例: `Asia/Tokyo`) |
 | `DOPAGAKIX_CREDIT` | 話者から決める | 動画に表示する音声のクレジット表記。通常は指定不要([VOICEVOX とキャラクターの規約](#voicevox-とキャラクターの規約)) |
 | `DOPAGAKIX_CHROMIUM` | 自動探索 | 描画に使う Chromium の実行ファイル |
@@ -132,6 +135,8 @@ VOICEVOX に接続できない場合は、作業を止めずに字幕のみで�
 ```
 
 例の `2` は四国めたん(ノーマル)です。話者によっては、企業が関わる利用に事前確認が必要です([VOICEVOX とキャラクターの規約](#voicevox-とキャラクターの規約))。
+
+すべてのプロジェクトの動画を 1 か所に集めるなら、個人の設定(`~/.claude/settings.json`)の `env` に `"DOPAGAKIX_VIDEO_DIR": "~/Movies/dopagakix"` のように書きます。
 
 ### キャラクターの口調
 
@@ -201,7 +206,8 @@ VOICEVOX に接続できない場合は、作業を止めずに字幕のみで�
 | `--speed <x>` | `1.25` | 話速(`render` のみ。ずんだもんの実測で約 7.3 文字/秒) |
 | `--timezone <tz>` | 実行環境の設定 | 画面の日時表示に使います |
 | `--out-dir <dir>` | `dopagakix-out` | 出力先の親ディレクトリ(`prepare` のみ) |
-| `-o, --out <file>` | 台本と同じ場所の `summary.mp4` | 動画の出力先(`render` のみ) |
+| `--video-dir <dir>` | (なし) | 完成した動画だけを置くフォルダ(`prepare` / `render`)。環境変数 `DOPAGAKIX_VIDEO_DIR` でも可 |
+| `-o, --out <file>` | 台本と同じ場所の `summary.mp4` | 動画の出力先(`render` のみ)。作業ファイルも同じ場所に置き、`--video-dir` より優先します |
 
 `prepare` に付けたオプションは、`prepare` が表示する `check` / `render` のコマンドにも引き継がれます。
 

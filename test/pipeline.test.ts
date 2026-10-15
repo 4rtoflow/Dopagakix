@@ -4,7 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { createSynthesizer, excludeOutputs, loadReport, prepareOutputRoot, renderReport } from "../src/pipeline.js";
+import { createSynthesizer, excludeOutputs, loadReport, prepareOutputRoot, renderReport, resolveRenderPaths } from "../src/pipeline.js";
 import { ScriptFileSchema } from "../src/script/schema.js";
 import { SilentSynthesizer } from "../src/tts/silent.js";
 import { VoicevoxSynthesizer } from "../src/tts/voicevox.js";
@@ -117,6 +117,26 @@ describe("prepareOutputRoot", () => {
     await writeFile(path.join(out, ".gitignore"), "custom\n");
     await prepareOutputRoot(out);
     expect(await readFile(path.join(out, ".gitignore"), "utf8")).toBe("custom\n");
+  });
+});
+
+describe("resolveRenderPaths", () => {
+  it("保存先を指定すると動画だけをそこに置き、作業ファイルは台本と同じ場所に残す", () => {
+    const run = "/repo/dopagakix-out/20261015-153012-abcdef12";
+    const report = path.join(run, "report.json");
+    expect(resolveRenderPaths({ report, title: "修正" })).toEqual({ outFile: path.join(run, "summary.mp4"), workDir: run });
+    expect(resolveRenderPaths({ report, title: "src/cli.ts: 修正", videoDir: "~/Movies" })).toEqual({
+      outFile: path.join(os.homedir(), "Movies", "20261015-153012-abcdef12-src_cli.ts_ 修正.mp4"),
+      workDir: run,
+    });
+    // 長いタイトルでもファイル名の上限を超えない
+    const long = resolveRenderPaths({ report, title: "あ".repeat(100), videoDir: "/videos" });
+    expect(Buffer.byteLength(path.basename(long.outFile))).toBeLessThanOrEqual(255);
+    // -o は保存先より優先し、作業ファイルも動画と同じ場所に置く
+    expect(resolveRenderPaths({ report, title: "修正", out: "/tmp/a/b.mp4", videoDir: "/videos" })).toEqual({
+      outFile: "/tmp/a/b.mp4",
+      workDir: "/tmp/a",
+    });
   });
 });
 
