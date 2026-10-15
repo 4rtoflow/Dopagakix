@@ -151,7 +151,7 @@ function shellQuote(arg: string): string {
 
 const commandLine = (args: string[]) => args.map(shellQuote).join(" ");
 
-/** prepare に明示した設定を、案内する check / render / digest のコマンドに引き継ぐ */
+/** 明示した設定を、案内するコマンド(prepare の check / render / digest、render の作り直し)に引き継ぐ */
 function explicitArgs(command: Command, flags: object, keys: string[]): string[] {
   const values = flags as Record<string, unknown>;
   const args: string[] = [];
@@ -287,7 +287,7 @@ withVideoDirOption(
 )
   .option("-o, --out <file>", "動画の出力先。作業ファイルも同じ場所に置き、--video-dir より優先する(既定: 台本と同じ場所の summary.mp4)")
   .option("--timezone <tz>", "時刻表示のタイムゾーン(例: Asia/Tokyo)。省略時は実行環境の設定")
-  .action(async (reportPath: string, flags: RenderCommandFlags) => {
+  .action(async (reportPath: string, flags: RenderCommandFlags, command: Command) => {
     const report = await loadReport(reportPath);
     let facts = report.facts;
     if (facts) {
@@ -343,7 +343,8 @@ withVideoDirOption(
         `、撮影 ${result.stats.captured}/${result.stats.frames} フレーム)`,
     );
     if (fallback) {
-      log(`注意: 読み上げなし(字幕のみ)で作成しました。描画し直すには: ${commandLine(["dopagakix", "render", displayPath(result.scriptFile)])}`);
+      const again = commandLine(["dopagakix", "render", displayPath(result.scriptFile), ...explicitArgs(command, flags, ["out", "videoDir"])]);
+      log(`注意: 読み上げなし(字幕のみ)で作成しました。描画し直すには: ${again}`);
     }
     if (result.credit) log(`クレジット表記: ${result.credit}(VOICEVOX の利用規約により必要です)`);
     process.stdout.write(`${result.outFile}\n`);
