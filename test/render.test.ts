@@ -50,6 +50,16 @@ describe("buildHtml", () => {
     expect(manual).not.toContain("AI 作成");
   });
 
+  it("字幕のみの動画は、柱に「音声なし」と出す", async () => {
+    const script = VideoScriptSchema.parse(JSON.parse(await readFile(path.join(fixtures, "script.json"), "utf8")));
+    const timeline = await buildTimeline(script, new SilentSynthesizer(), { maxSeconds: 120, speed: 1, maxSpeed: 1.3 });
+    const silent = buildHtml({ script, facts, scenes: timeline.scenes, silent: true, author: "agent" });
+    expect(silent).toContain("<span>AI 作成</span><span>音声なし</span>");
+    const voiced = buildHtml({ script, facts, scenes: timeline.scenes, credit: "VOICEVOX:テスト", author: "agent" });
+    expect(voiced).toContain("<span>AI 作成</span><span>VOICEVOX:テスト</span>");
+    expect(voiced).not.toContain("音声なし");
+  });
+
   it("作業時間の推定があればそれを出し、日をまたぐ期間は月日も表示する", async () => {
     const script = VideoScriptSchema.parse(JSON.parse(await readFile(path.join(fixtures, "script.json"), "utf8")));
     const timeline = await buildTimeline(script, new SilentSynthesizer(), { maxSeconds: 120, speed: 1, maxSpeed: 1.3 });

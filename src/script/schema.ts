@@ -76,6 +76,10 @@ export const ScriptFileSchema = z.object({
   author: z.enum(AUTHORS).default("agent"),
   /** 読み上げ文の口調(確認に使ったもの。記録用) */
   persona: z.object({ id: z.string(), name: z.string() }).optional(),
+  /** 読み上げの有無と話者(記録用。描画し直すときは、その時の指定で読み上げる) */
+  voice: z
+    .object({ enabled: z.boolean(), speaker: z.number().int().optional(), name: z.string().optional(), style: z.string().optional() })
+    .optional(),
   facts: SessionFactsSchema,
   script: VideoScriptSchema,
 });

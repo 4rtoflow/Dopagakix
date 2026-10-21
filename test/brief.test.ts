@@ -73,9 +73,37 @@ describe("checkEnvironment", () => {
       status: "ok",
       detail: "ずんだもん(ノーマル、スタイル ID 3)。クレジット表記「VOICEVOX:ずんだもん」",
     });
-    expect(await voice({ voice: true, speaker: 3, fetch: unreachable })).toMatchObject({ status: "degraded" });
+    // 読み上げは必須。接続できなければ不足として扱い、対処を示す
+    expect(await voice({ voice: true, speaker: 3, fetch: unreachable })).toMatchObject({
+      status: "missing",
+      detail: expect.stringMatching(/接続できません。エンジンを起動してから[\s\S]*DOPAGAKIX_VOICEVOX_START/),
+    });
     expect(await voice({ voice: true, speaker: 13, fetch: engine })).toMatchObject({ status: "missing" });
-    expect(await voice({ voice: false, speaker: 3, fetch: unreachable })).toMatchObject({ status: "ok" });
+    expect(await voice({ voice: false, speaker: 3, fetch: unreachable })).toMatchObject({ status: "ok", detail: expect.stringContaining("音声なし") });
+  });
+
+  it.skipIf(process.platform === "win32")("起動コマンドが設定されていれば、エンジンを起動してから確かめる", async () => {
+    let calls = 0;
+    const starting = (async (input: URL | RequestInfo, init?: RequestInit) =>
+      ++calls <= 2 ? unreachable(input, init) : engine(input, init)) as typeof fetch;
+    const started: string[] = [];
+    const items = await checkEnvironment({
+      ...base,
+      voice: true,
+      speaker: 3,
+      fetch: starting,
+      startCommand: "exit 0",
+      onStart: (command) => started.push(command),
+    });
+    expect(items.find((item) => item.name === "読み上げ")).toMatchObject({ status: "ok" });
+    expect(started).toEqual(["exit 0"]);
+
+    // 起動しても応答しなければ、その内容を不足として示す
+    const failed = await checkEnvironment({ ...base, voice: true, speaker: 3, fetch: unreachable, startCommand: "echo no-engine; exit 2" });
+    expect(failed.find((item) => item.name === "読み上げ")).toMatchObject({
+      status: "missing",
+      detail: expect.stringMatching(/終了コード 2[\s\S]*no-engine/),
+    });
   });
 
   it("指定した Chromium が無ければ不足として扱う", async () => {

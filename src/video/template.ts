@@ -11,6 +11,8 @@ export interface TemplateInput {
   facts: SessionFacts;
   scenes: TimedScene[];
   credit?: string;
+  /** 読み上げなし(字幕のみ)。柱に「音声なし」と出し、無音が意図したものだと分かるようにする */
+  silent?: boolean;
   /** 台本の書き手。agent なら作業をした AI エージェント自身 */
   author: Author;
   timeZone?: string;
@@ -454,7 +456,7 @@ const PAGE_SCRIPT = String.raw`
 
 /** 動画 1 本分のページを作る。フォントは /fonts/ 以下から読み込む前提。 */
 export function buildHtml(input: TemplateInput): string {
-  const { script, facts, scenes, credit, author, timeZone } = input;
+  const { script, facts, scenes, credit, silent, author, timeZone } = input;
   const bodies = {
     opening: openingScene(script, facts, timeZone),
     request: requestScene(script, facts),
@@ -468,7 +470,9 @@ export function buildHtml(input: TemplateInput): string {
     .join("\n");
   const where = [facts.project, facts.branch].filter(Boolean).join(" ・ ");
   const date = formatDateTime(facts.endTime, timeZone).slice(0, 10).replaceAll("/", ".");
-  const labels = [author === "agent" ? "AI 作成" : undefined, credit].filter(Boolean).map((l) => `<span>${escapeHtml(l!)}</span>`);
+  const labels = [author === "agent" ? "AI 作成" : undefined, credit, silent ? "音声なし" : undefined]
+    .filter(Boolean)
+    .map((l) => `<span>${escapeHtml(l!)}</span>`);
   const data = JSON.stringify({ scenes: scenes.map(({ kind, start, end, cues }) => ({ kind, start, end, cues })) }).replace(
     /</g,
     "\\u003c",
