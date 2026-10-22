@@ -1,61 +1,12 @@
-import { spawnSync } from "node:child_process";
 import { narrationBudget, SENTENCE_LIMIT } from "./script/check.js";
-import { withVoicevoxStart } from "./tts/start.js";
-import { creditFor, VoicevoxClient } from "./tts/voicevox.js";
 import { formatDateTime } from "./util/time.js";
-import { resolveChromium } from "./video/browser.js";
-/** 読み上げ(VOICEVOX)の状態。読み上げありなら必須で、接続できなければ描画できない。 */
-async function voiceItem(options) {
-    if (!options.voice)
-        return { name: "読み上げ", status: "ok", detail: "なし(字幕のみで作成。動画の柱に「音声なし」と表示)" };
-    const client = new VoicevoxClient(options.voicevoxUrl, options.fetch);
-    try {
-        const speakers = await withVoicevoxStart(() => client.speakers(), {
-            command: options.startCommand,
-            baseUrl: options.voicevoxUrl,
-            onStart: options.onStart,
-            fetch: options.fetch,
-        });
-        const owner = speakers.find((s) => s.styles.some((style) => style.id === options.speaker));
-        const style = owner?.styles.find((s) => s.id === options.speaker);
-        return owner && style
-            ? {
-                name: "読み上げ",
-                status: "ok",
-                detail: `${owner.name}(${style.name}、スタイル ID ${options.speaker})。クレジット表記「${options.credit ?? creditFor(owner.name)}」`,
-            }
-            : {
-                name: "読み上げ",
-                status: "missing",
-                detail: `話者 ID ${options.speaker} が VOICEVOX エンジンにありません。\`dopagakix speakers\` で一覧を確認してください`,
-            };
-    }
-    catch (error) {
-        return { name: "読み上げ", status: "missing", detail: error.message };
-    }
-}
-/** 描画に必要なもの(VOICEVOX・Chromium・ffmpeg)がそろっているかを、台本を書く前に確かめる。 */
-export async function checkEnvironment(options) {
-    const items = [await voiceItem(options)];
-    try {
-        items.push({ name: "Chromium", status: "ok", detail: resolveChromium(options.chromium) });
-    }
-    catch (error) {
-        items.push({ name: "Chromium", status: "missing", detail: error.message });
-    }
-    const ffmpeg = process.env.FFMPEG_PATH ?? "ffmpeg";
-    const probe = spawnSync(ffmpeg, ["-version"], { encoding: "utf8" });
-    items.push(probe.status === 0
-        ? { name: "ffmpeg", status: "ok", detail: probe.stdout.split("\n")[0].trim() }
-        : { name: "ffmpeg", status: "missing", detail: `${ffmpeg} を実行できません。ffmpeg をインストールしてください` });
-    return items;
-}
 function formatMinutes(minutes) {
     if (minutes === undefined)
         return "不明";
     return minutes < 60 ? `${minutes} 分` : `約 ${(minutes / 60).toFixed(1)} 時間`;
 }
 const number = (n) => n.toLocaleString("ja-JP");
+const STATUS_LABEL = { ok: "", warn: "[注意] ", error: "[不足] " };
 /** prepare の出力。エージェントが台本を書くときに参照する情報をまとめる。 */
 export function buildBrief(input) {
     const { facts, persona } = input;
@@ -64,7 +15,7 @@ export function buildBrief(input) {
     const start = formatDateTime(facts.startTime, input.timeZone);
     const end = formatDateTime(facts.endTime, input.timeZone);
     const topFiles = [...facts.files].sort((a, b) => b.added + b.removed - (a.added + a.removed)).slice(0, 8);
-    const missing = input.environment.filter((item) => item.status === "missing");
+    const missing = input.environment.filter((item) => item.status === "error");
     const voice = persona
         ? [
             `## 読み上げ文の口調: ${persona.name}`,
@@ -79,7 +30,7 @@ export function buildBrief(input) {
         "# 動画レポートの準備",
         "",
         missing.length > 0
-            ? `**描画に必要なものが不足しています(${missing.map((m) => m.name).join("、")})。「環境」を指示者に伝えてください。**\n`
+            ? `**描画に必要なものが不足しています(${missing.map((m) => m.name).join("、")})。\`dopagakix doctor\` を実行し、エラーの項目と対処を指示者に伝えてください。**\n`
             : undefined,
         "## 手順",
         `1. 台本を書く: ${input.reportFile}`,
@@ -102,7 +53,8 @@ export function buildBrief(input) {
         `- narration は全シーン合計で全角 ${narrationBudget(input.seconds)} 文字程度(約 ${input.seconds} 秒)。1 文は ${SENTENCE_LIMIT} 文字以内、各シーン 1〜3 文。`,
         "",
         "## 環境",
-        ...input.environment.map((item) => `- ${item.name}: ${item.status === "ok" ? "" : "[不足] "}${item.detail}`),
+        input.voice ? undefined : "- 読み上げ: なし(字幕のみで作成。動画の柱に「音声なし」と表示)",
+        ...input.environment.map((item) => `- ${item.name}: ${STATUS_LABEL[item.status]}${item.detail.replaceAll("\n", " / ")}`),
         "",
     ];
     return lines.filter((line) => line !== undefined).join("\n");

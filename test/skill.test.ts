@@ -44,7 +44,7 @@ describe("同梱のスキル", () => {
     const used = new Set([...text.matchAll(/`dopagakix ([a-z-]+)/g)].map((m) => m[1]));
     const cli = await readFile(path.join(bundledSkillDir(), "..", "..", "..", "src", "cli.ts"), "utf8");
     for (const name of used) expect(cli).toContain(`.command("${name}")`);
-    expect([...used].sort()).toEqual(["check", "digest", "prepare", "render", "sessions"]);
+    expect([...used].sort()).toEqual(["check", "digest", "doctor", "prepare", "render", "sessions"]);
   });
 });
 

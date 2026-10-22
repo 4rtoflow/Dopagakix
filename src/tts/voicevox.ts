@@ -8,7 +8,8 @@ export const DEFAULT_SPEAKER = 3;
 /** エンジンに接続できないときの対処(指示者に伝える内容) */
 export const ENGINE_HELP =
   "エンジンを起動してから、もう一度実行してください(README の手順で作ったコンテナなら docker start voicevox)。" +
-  "別の場所のエンジンを使う場合は VOICEVOX_URL を、接続できないときに自動で起動させる場合は DOPAGAKIX_VOICEVOX_START を設定します。";
+  "別の場所のエンジンを使う場合は VOICEVOX_URL を、接続できないときに自動で起動させる場合は DOPAGAKIX_VOICEVOX_START を設定します。" +
+  "状態は dopagakix doctor で確かめられます。";
 
 export interface VoicevoxSpeaker {
   name: string;
