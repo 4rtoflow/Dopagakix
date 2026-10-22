@@ -8,9 +8,10 @@ import { redactSecrets } from "./redact.js";
 import { normalizeScript } from "./script/normalize.js";
 import { type Author, type ScriptFile, ScriptFileSchema, type VideoScript, VideoScriptSchema } from "./script/schema.js";
 import { SilentSynthesizer } from "./tts/silent.js";
+import { withVoicevoxStart } from "./tts/start.js";
 import type { Synthesizer } from "./tts/types.js";
-import { VoicevoxConnectionError, VoicevoxSynthesizer } from "./tts/voicevox.js";
-import { encodeWav } from "./tts/wav.js";
+import { VoicevoxSynthesizer } from "./tts/voicevox.js";
+import { encodeWav, peakDbfs } from "./tts/wav.js";
 import { buildDigest, collectFacts } from "./transcript/digest.js";
 import { type LocatedTranscript, type LocateOptions, locateTranscript } from "./transcript/locate.js";
 import { readTranscript } from "./transcript/parse.js";
@@ -122,42 +123,39 @@ export async function loadReport(file: string): Promise<LoadedReport> {
   return { raw: parsed.data, script: normalizeScript(parsed.data), author: "agent" };
 }
 
+/**
+ * 環境変数 DOPAGAKIX_REQUIRE_VOICE=1 のときは、字幕のみ(--no-voice)を許さない。
+ * 指示者が設定しておけば、エージェントが読み上げを省いた動画で済ませることを防げる。
+ */
+export function assertVoiceAllowed(voice: boolean | undefined, env: NodeJS.ProcessEnv = process.env): void {
+  if (voice === false && env.DOPAGAKIX_REQUIRE_VOICE === "1") {
+    throw new Error("DOPAGAKIX_REQUIRE_VOICE=1 が設定されているため、--no-voice(字幕のみ)では作れません。読み上げ付きで作ってください。");
+  }
+}
+
 export interface SynthesizerOptions {
   voice: boolean;
   speaker: number;
   voicevoxUrl: string;
   /** クレジット表記の指定(省略時は話者から決める) */
   credit?: string;
+  /** 接続できないときに実行するエンジンの起動コマンド(環境変数 DOPAGAKIX_VOICEVOX_START) */
+  startCommand?: string;
+  /** 起動コマンドを実行する直前に呼ぶ(応答を待つ間の表示用) */
+  onStart?: (command: string) => void;
   fetch?: typeof fetch;
 }
 
-export interface SynthesizerChoice {
-  synth: Synthesizer;
-  /** 読み上げを付けられず、字幕のみに切り替えた理由 */
-  fallback?: string;
-}
-
 /**
- * 読み上げに使う合成器を選ぶ。VOICEVOX に接続できないときは、作業を止めないよう
- * 字幕のみに切り替える(話者 ID の誤りなど、設定の誤りはエラーにする)。
+ * 読み上げに使う合成器を作る。読み上げありで VOICEVOX に接続できなければ、起動コマンドが設定されていれば
+ * エンジンを起動してから続け、なければエラーにする(字幕のみには切り替えない)。
  */
-export async function createSynthesizer(options: SynthesizerOptions): Promise<SynthesizerChoice> {
-  if (!options.voice) return { synth: new SilentSynthesizer() };
-  try {
-    const synth = await VoicevoxSynthesizer.create({
-      baseUrl: options.voicevoxUrl,
-      speaker: options.speaker,
-      credit: options.credit,
-      fetch: options.fetch,
-    });
-    return { synth };
-  } catch (error) {
-    if (!(error instanceof VoicevoxConnectionError)) throw error;
-    return {
-      synth: new SilentSynthesizer(),
-      fallback: `VOICEVOX エンジン(${options.voicevoxUrl})に接続できないため、字幕のみで作成します。読み上げを付けるには、エンジンを起動してから描画し直してください。`,
-    };
-  }
+export async function createSynthesizer(options: SynthesizerOptions): Promise<Synthesizer> {
+  if (!options.voice) return new SilentSynthesizer();
+  return withVoicevoxStart(
+    () => VoicevoxSynthesizer.create({ baseUrl: options.voicevoxUrl, speaker: options.speaker, credit: options.credit, fetch: options.fetch }),
+    { command: options.startCommand, baseUrl: options.voicevoxUrl, onStart: options.onStart, fetch: options.fetch },
+  );
 }
 
 /** 出力先を作り、中身を git の管理対象から外す(pytest のキャッシュと同じく、.gitignore に * を書く)。 */
@@ -237,13 +235,18 @@ export interface RenderResult {
   stats: RenderStats;
 }
 
+/** 読み上げありで、最大音量がこれを下回ったら無音とみなす(CI の確認と同じ基準) */
+export const SILENT_DBFS = -40;
+
 /** 台本から音声と映像を作り、mp4 に書き出す。 */
 export async function renderReport(input: RenderInput, options: RenderPipelineOptions): Promise<RenderResult> {
+  const { voice } = options.synth;
   const record: ScriptFile = {
     version: 1,
     generatedAt: new Date().toISOString(),
     author: input.author,
     ...(input.persona ? { persona: input.persona } : {}),
+    voice: voice ? { enabled: true, ...voice } : { enabled: false },
     facts: input.facts,
     script: input.script,
   };
@@ -256,6 +259,15 @@ export async function renderReport(input: RenderInput, options: RenderPipelineOp
     maxSpeed: options.maxSpeed,
     onProgress: options.onSpeechProgress,
   });
+  if (voice) {
+    const peak = peakDbfs(timeline.audio);
+    if (peak < SILENT_DBFS) {
+      const level = Number.isFinite(peak) ? `最大音量 ${peak.toFixed(1)} dBFS` : "完全な無音";
+      throw new Error(
+        `読み上げの音声がほぼ無音です(${level}。${SILENT_DBFS} dBFS 未満)。VOICEVOX エンジン(${voice.name}、スタイル ID ${voice.speaker})の状態を確かめてください。`,
+      );
+    }
+  }
   const audioFile = path.join(options.workDir, "narration.wav");
   await writeFile(audioFile, encodeWav(timeline.audio));
   await writeFile(
@@ -268,6 +280,7 @@ export async function renderReport(input: RenderInput, options: RenderPipelineOp
     facts: input.facts,
     scenes: timeline.scenes,
     credit: timeline.credit,
+    silent: !voice,
     author: input.author,
     timeZone: options.timeZone,
   });

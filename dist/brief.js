@@ -1,39 +1,42 @@
 import { spawnSync } from "node:child_process";
 import { narrationBudget, SENTENCE_LIMIT } from "./script/check.js";
+import { withVoicevoxStart } from "./tts/start.js";
 import { creditFor, VoicevoxClient } from "./tts/voicevox.js";
 import { formatDateTime } from "./util/time.js";
 import { resolveChromium } from "./video/browser.js";
+/** 読み上げ(VOICEVOX)の状態。読み上げありなら必須で、接続できなければ描画できない。 */
+async function voiceItem(options) {
+    if (!options.voice)
+        return { name: "読み上げ", status: "ok", detail: "なし(字幕のみで作成。動画の柱に「音声なし」と表示)" };
+    const client = new VoicevoxClient(options.voicevoxUrl, options.fetch);
+    try {
+        const speakers = await withVoicevoxStart(() => client.speakers(), {
+            command: options.startCommand,
+            baseUrl: options.voicevoxUrl,
+            onStart: options.onStart,
+            fetch: options.fetch,
+        });
+        const owner = speakers.find((s) => s.styles.some((style) => style.id === options.speaker));
+        const style = owner?.styles.find((s) => s.id === options.speaker);
+        return owner && style
+            ? {
+                name: "読み上げ",
+                status: "ok",
+                detail: `${owner.name}(${style.name}、スタイル ID ${options.speaker})。クレジット表記「${options.credit ?? creditFor(owner.name)}」`,
+            }
+            : {
+                name: "読み上げ",
+                status: "missing",
+                detail: `話者 ID ${options.speaker} が VOICEVOX エンジンにありません。\`dopagakix speakers\` で一覧を確認してください`,
+            };
+    }
+    catch (error) {
+        return { name: "読み上げ", status: "missing", detail: error.message };
+    }
+}
 /** 描画に必要なもの(VOICEVOX・Chromium・ffmpeg)がそろっているかを、台本を書く前に確かめる。 */
 export async function checkEnvironment(options) {
-    const items = [];
-    if (!options.voice) {
-        items.push({ name: "読み上げ", status: "ok", detail: "なし(字幕のみで作成)" });
-    }
-    else {
-        try {
-            const speakers = await new VoicevoxClient(options.voicevoxUrl, options.fetch).speakers();
-            const owner = speakers.find((s) => s.styles.some((style) => style.id === options.speaker));
-            const style = owner?.styles.find((s) => s.id === options.speaker);
-            items.push(owner && style
-                ? {
-                    name: "読み上げ",
-                    status: "ok",
-                    detail: `${owner.name}(${style.name}、スタイル ID ${options.speaker})。クレジット表記「${options.credit ?? creditFor(owner.name)}」`,
-                }
-                : {
-                    name: "読み上げ",
-                    status: "missing",
-                    detail: `話者 ID ${options.speaker} が VOICEVOX エンジンにありません。\`dopagakix speakers\` で一覧を確認してください`,
-                });
-        }
-        catch {
-            items.push({
-                name: "読み上げ",
-                status: "degraded",
-                detail: `VOICEVOX エンジン(${options.voicevoxUrl})に接続できません。このままでは字幕のみの動画になります`,
-            });
-        }
-    }
+    const items = [await voiceItem(options)];
     try {
         items.push({ name: "Chromium", status: "ok", detail: resolveChromium(options.chromium) });
     }
@@ -99,7 +102,7 @@ export function buildBrief(input) {
         `- narration は全シーン合計で全角 ${narrationBudget(input.seconds)} 文字程度(約 ${input.seconds} 秒)。1 文は ${SENTENCE_LIMIT} 文字以内、各シーン 1〜3 文。`,
         "",
         "## 環境",
-        ...input.environment.map((item) => `- ${item.name}: ${item.status === "ok" ? "" : item.status === "degraded" ? "[注意] " : "[不足] "}${item.detail}`),
+        ...input.environment.map((item) => `- ${item.name}: ${item.status === "ok" ? "" : "[不足] "}${item.detail}`),
         "",
     ];
     return lines.filter((line) => line !== undefined).join("\n");

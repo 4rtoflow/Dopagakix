@@ -4,9 +4,18 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { createSynthesizer, excludeOutputs, loadReport, prepareOutputRoot, renderReport, resolveRenderPaths } from "../src/pipeline.js";
+import {
+  assertVoiceAllowed,
+  createSynthesizer,
+  excludeOutputs,
+  loadReport,
+  prepareOutputRoot,
+  renderReport,
+  resolveRenderPaths,
+} from "../src/pipeline.js";
 import { ScriptFileSchema } from "../src/script/schema.js";
 import { SilentSynthesizer } from "../src/tts/silent.js";
+import type { Synthesizer } from "../src/tts/types.js";
 import { VoicevoxSynthesizer } from "../src/tts/voicevox.js";
 import { encodeWav, silence } from "../src/tts/wav.js";
 import { canRender } from "./support.js";
@@ -87,24 +96,78 @@ describe("createSynthesizer", () => {
   }) as typeof fetch;
   const base = { voicevoxUrl: "http://127.0.0.1:59999", speaker: 3 };
 
-  it("VOICEVOX に接続できれば読み上げを使い、できなければ字幕のみに切り替える", async () => {
+  it("VOICEVOX に接続できれば読み上げを使い、できなければエラーにする(字幕のみに切り替えない)", async () => {
     const voiced = await createSynthesizer({ ...base, voice: true, fetch: engine });
-    expect(voiced.synth).toBeInstanceOf(VoicevoxSynthesizer);
-    expect(voiced.fallback).toBeUndefined();
+    expect(voiced).toBeInstanceOf(VoicevoxSynthesizer);
+    expect(voiced.voice).toEqual({ speaker: 3, name: "ずんだもん", style: "ノーマル" });
 
-    const fallback = await createSynthesizer({ ...base, voice: true, fetch: unreachable });
-    expect(fallback.synth).toBeInstanceOf(SilentSynthesizer);
-    expect(fallback.fallback).toMatch(/接続できないため、字幕のみ/);
+    await expect(createSynthesizer({ ...base, voice: true, fetch: unreachable })).rejects.toThrow(
+      /接続できません[\s\S]*VOICEVOX_URL[\s\S]*DOPAGAKIX_VOICEVOX_START/,
+    );
 
     const credited = await createSynthesizer({ ...base, voice: true, credit: "VOICEVOX:指定した表記", fetch: engine });
-    expect(credited.synth.credit).toBe("VOICEVOX:指定した表記");
+    expect(credited.credit).toBe("VOICEVOX:指定した表記");
 
+    // 字幕のみは明示したときだけ
     const silent = await createSynthesizer({ ...base, voice: false, fetch: unreachable });
-    expect(silent).toEqual({ synth: expect.any(SilentSynthesizer) });
+    expect(silent).toBeInstanceOf(SilentSynthesizer);
+    expect(silent.voice).toBeUndefined();
   });
 
-  it("話者 ID の誤りは切り替えずにエラーにする", async () => {
+  it.skipIf(process.platform === "win32")("起動コマンドが設定されていれば、エンジンを起動してから読み上げを使う", async () => {
+    let calls = 0;
+    // 話者の一覧と、起動後の最初の応答確認では接続できず、その後は応答する
+    const starting = (async (input: URL | RequestInfo, init?: RequestInit) =>
+      ++calls <= 2 ? unreachable(input, init) : engine(input, init)) as typeof fetch;
+    const started: string[] = [];
+    const synth = await createSynthesizer({
+      ...base,
+      voice: true,
+      fetch: starting,
+      startCommand: "exit 0",
+      onStart: (command) => started.push(command),
+    });
+    expect(synth).toBeInstanceOf(VoicevoxSynthesizer);
+    expect(started).toEqual(["exit 0"]);
+  });
+
+  it("話者 ID の誤りはエラーにする", async () => {
     await expect(createSynthesizer({ ...base, speaker: 999, voice: true, fetch: engine })).rejects.toThrow(/話者 ID 999/);
+  });
+});
+
+describe("assertVoiceAllowed", () => {
+  it("DOPAGAKIX_REQUIRE_VOICE=1 のときだけ、字幕のみの指定をエラーにする", () => {
+    expect(() => assertVoiceAllowed(false, { DOPAGAKIX_REQUIRE_VOICE: "1" })).toThrow(/DOPAGAKIX_REQUIRE_VOICE=1[\s\S]*--no-voice/);
+    expect(() => assertVoiceAllowed(true, { DOPAGAKIX_REQUIRE_VOICE: "1" })).not.toThrow();
+    // 読み上げの指定がないコマンド(digest など)
+    expect(() => assertVoiceAllowed(undefined, { DOPAGAKIX_REQUIRE_VOICE: "1" })).not.toThrow();
+    expect(() => assertVoiceAllowed(false, {})).not.toThrow();
+  });
+});
+
+describe("renderReport", () => {
+  it("読み上げありで音声がほぼ無音なら、動画を作らずにエラーにする", async () => {
+    const report = await loadReport(example);
+    const workDir = path.join(dir, "silent");
+    await prepareOutputRoot(workDir);
+    const mute: Synthesizer = {
+      credit: "VOICEVOX:テスト",
+      voice: { speaker: 3, name: "テスト", style: "ノーマル" },
+      synthesize: async () => silence(0.5, 24_000),
+    };
+    const outFile = path.join(workDir, "summary.mp4");
+    await expect(
+      renderReport(
+        { script: report.script, facts: report.facts!, author: "agent" },
+        { outFile, workDir, synth: mute, speed: 1.25, maxSpeed: 1.45, maxSeconds: 120, fps: 4, scale: 0.25 },
+      ),
+    ).rejects.toThrow(/ほぼ無音です\(完全な無音。-40 dBFS 未満\)/);
+    expect(existsSync(outFile)).toBe(false);
+    expect(existsSync(path.join(workDir, "narration.wav"))).toBe(false);
+    // 読み上げの有無と話者を記録する
+    const record = ScriptFileSchema.parse(JSON.parse(await readFile(path.join(workDir, "script.json"), "utf8")));
+    expect(record.voice).toEqual({ enabled: true, speaker: 3, name: "テスト", style: "ノーマル" });
   });
 });
 
@@ -162,7 +225,7 @@ describe.runIf(canRender)("renderReport(結合テスト)", () => {
     expect(existsSync(result.outFile)).toBe(true);
     expect(existsSync(path.join(workDir, "narration.wav"))).toBe(true);
     const record = ScriptFileSchema.parse(JSON.parse(await readFile(result.scriptFile, "utf8")));
-    expect(record).toMatchObject({ author: "agent", persona: { id: "zundamon" }, facts: report.facts });
+    expect(record).toMatchObject({ author: "agent", persona: { id: "zundamon" }, voice: { enabled: false }, facts: report.facts });
 
     // 記録した script.json から同じ数値で読み直せる
     const again = await loadReport(result.scriptFile);

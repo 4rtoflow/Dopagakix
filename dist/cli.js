@@ -6,13 +6,14 @@ import path from "node:path";
 import { Command, InvalidArgumentError, Option } from "commander";
 import { buildBrief, checkEnvironment } from "./brief.js";
 import { personaMismatch, resolvePersona } from "./persona.js";
-import { createSynthesizer, DEFAULT_OUT_DIR, digestSession, loadReport, loadSession, prepareOutputRoot, renderReport, resolveRenderPaths, } from "./pipeline.js";
+import { assertVoiceAllowed, createSynthesizer, DEFAULT_OUT_DIR, digestSession, loadReport, loadSession, prepareOutputRoot, renderReport, resolveRenderPaths, } from "./pipeline.js";
 import { checkScript } from "./script/check.js";
 import { STATUS_LABELS } from "./script/schema.js";
 import { installSkill, SKILL_NAME, skillsDir } from "./skill.js";
 import { DEFAULT_MAX_DIGEST_CHARS } from "./transcript/digest.js";
 import { listTranscripts } from "./transcript/locate.js";
 import { readTranscript } from "./transcript/parse.js";
+import { START_TIMEOUT_MS } from "./tts/start.js";
 import { DEFAULT_SPEAKER, DEFAULT_VOICEVOX_URL, VoicevoxClient } from "./tts/voicevox.js";
 import { log, progress } from "./util/log.js";
 import { formatDateTime, formatStamp } from "./util/time.js";
@@ -48,7 +49,7 @@ function withSessionOptions(command) {
 }
 function withVoiceOptions(command) {
     return command
-        .option("--no-voice", "読み上げなし(字幕のみ)で作る。VOICEVOX は不要")
+        .option("--no-voice", "読み上げなし(字幕のみ)で作る。VOICEVOX は不要。動画の柱に「音声なし」と出る")
         .addOption(new Option("--speaker <id>", "VOICEVOX の話者(スタイル)ID。`dopagakix speakers` で一覧")
         .argParser(nonNegativeInteger)
         .default(DEFAULT_SPEAKER)
@@ -85,6 +86,11 @@ const FOUND_BY = {
 async function choosePersona(flags) {
     return resolvePersona({ option: flags.persona, speaker: flags.speaker, voice: flags.voice, voicevoxUrl: flags.voicevoxUrl });
 }
+/** VOICEVOX に接続できないときに実行する、エンジンの起動コマンド */
+const engineStart = {
+    command: process.env.DOPAGAKIX_VOICEVOX_START || undefined,
+    onStart: (command) => log(`VOICEVOX エンジンに接続できないため、起動します(応答を最大 ${START_TIMEOUT_MS / 1000} 秒待ちます): ${command}`),
+};
 /** コマンドの表示用に、cwd の中なら相対パスにする */
 function displayPath(file) {
     const relative = path.relative(process.cwd(), file);
@@ -94,7 +100,7 @@ function shellQuote(arg) {
     return /^[\w@%+=:,./-]+$/.test(arg) ? arg : `'${arg.replaceAll("'", "'\\''")}'`;
 }
 const commandLine = (args) => args.map(shellQuote).join(" ");
-/** 明示した設定を、案内するコマンド(prepare の check / render / digest、render の作り直し)に引き継ぐ */
+/** prepare に明示した設定を、案内する check / render / digest のコマンドに引き継ぐ */
 function explicitArgs(command, flags, keys) {
     const values = flags;
     const args = [];
@@ -113,7 +119,8 @@ function explicitArgs(command, flags, keys) {
 const program = new Command()
     .name("dopagakix")
     .description("AI エージェントが書いた作業報告の台本から、指示者向けの縦型動画を作る")
-    .version(version);
+    .version(version)
+    .hook("preAction", (_program, action) => assertVoiceAllowed(action.opts().voice));
 withVideoDirOption(withCreditOption(withSecondsOption(withVoiceOptions(withSessionOptions(program
     .command("prepare")
     .description("動画レポートの準備。出力先を作り、台本を書くのに必要な情報(画面に出る数値・口調・長さ・環境)を表示する"))))))
@@ -124,8 +131,9 @@ withVideoDirOption(withCreditOption(withSecondsOption(withVoiceOptions(withSessi
     const outRoot = path.resolve(flags.outDir);
     const loaded = await loadSession(locateOptions(flags), [outRoot]);
     log(`ログ: ${loaded.file}(${FOUND_BY[loaded.how]})`);
+    // 口調は話者名から決めるため、エンジンを起動する場合は先に起動しておく
+    const environment = await checkEnvironment({ ...flags, startCommand: engineStart.command, onStart: engineStart.onStart });
     const persona = await choosePersona(flags);
-    const environment = await checkEnvironment(flags);
     await prepareOutputRoot(outRoot);
     const runDir = path.join(outRoot, `${formatStamp(new Date(), flags.timezone)}-${loaded.sessionId.slice(0, 8)}`);
     await mkdir(runDir, { recursive: true });
@@ -189,7 +197,7 @@ withVideoDirOption(withCreditOption(withRenderOptions(withSecondsOption(withVoic
     .argument("<report>", "台本(report.json)、または描画済みの script.json(記録された数値で描画し直す)")))))))
     .option("-o, --out <file>", "動画の出力先。作業ファイルも同じ場所に置き、--video-dir より優先する(既定: 台本と同じ場所の summary.mp4)")
     .option("--timezone <tz>", "時刻表示のタイムゾーン(例: Asia/Tokyo)。省略時は実行環境の設定")
-    .action(async (reportPath, flags, command) => {
+    .action(async (reportPath, flags) => {
     const report = await loadReport(reportPath);
     let facts = report.facts;
     if (facts) {
@@ -200,6 +208,10 @@ withVideoDirOption(withCreditOption(withRenderOptions(withSecondsOption(withVoic
         facts = loaded.facts;
         log(`ログ: ${loaded.file}(${FOUND_BY[loaded.how]})`);
     }
+    // 読み上げありで VOICEVOX に接続できなければ、ここで止める(字幕のみには切り替えない)
+    const synth = await createSynthesizer({ ...flags, startCommand: engineStart.command, onStart: engineStart.onStart });
+    if (!flags.voice)
+        log("読み上げ: なし(字幕のみ。動画の柱に「音声なし」と表示します)");
     const persona = await choosePersona(flags);
     log(`口調: ${persona?.name ?? "丁寧語"}`);
     for (const issue of checkScript(report.raw, { persona, facts, seconds: flags.seconds }).issues) {
@@ -208,9 +220,6 @@ withVideoDirOption(withCreditOption(withRenderOptions(withSecondsOption(withVoic
     const mismatch = flags.voice ? personaMismatch(report.persona, flags.speaker) : undefined;
     if (mismatch)
         log(`注意: ${mismatch}`);
-    const { synth, fallback } = await createSynthesizer(flags);
-    if (fallback)
-        log(`注意: ${fallback}`);
     const { outFile, workDir } = resolveRenderPaths({
         report: reportPath,
         title: report.script.title,
@@ -234,15 +243,11 @@ withVideoDirOption(withCreditOption(withRenderOptions(withSecondsOption(withVoic
         fps: flags.fps,
         chromiumPath: flags.chromium,
         timeZone: flags.timezone,
-        onSpeechProgress: progress(flags.voice && !fallback ? "音声合成" : "字幕の時間割り当て"),
+        onSpeechProgress: progress(flags.voice ? "音声合成" : "字幕の時間割り当て"),
         onFrameProgress: progress("描画"),
     });
     log(`完了: ${result.outFile}(${result.duration.toFixed(1)} 秒、話速 ${result.speed}` +
         `、撮影 ${result.stats.captured}/${result.stats.frames} フレーム)`);
-    if (fallback) {
-        const again = commandLine(["dopagakix", "render", displayPath(result.scriptFile), ...explicitArgs(command, flags, ["out", "videoDir"])]);
-        log(`注意: 読み上げなし(字幕のみ)で作成しました。描画し直すには: ${again}`);
-    }
     if (result.credit)
         log(`クレジット表記: ${result.credit}(VOICEVOX の利用規約により必要です)`);
     process.stdout.write(`${result.outFile}\n`);

@@ -9,6 +9,13 @@ export function durationOf(pcm: Pcm): number {
   return pcm.samples.length / pcm.channels / pcm.sampleRate;
 }
 
+/** 最大音量(dBFS)。完全な無音なら -Infinity */
+export function peakDbfs(pcm: Pcm): number {
+  let peak = 0;
+  for (const sample of pcm.samples) peak = Math.max(peak, Math.abs(sample));
+  return peak === 0 ? -Infinity : 20 * Math.log10(peak / 32768);
+}
+
 export function silence(seconds: number, sampleRate: number, channels = 1): Pcm {
   const frames = Math.max(0, Math.round(seconds * sampleRate));
   return { sampleRate, channels, samples: new Int16Array(frames * channels) };
