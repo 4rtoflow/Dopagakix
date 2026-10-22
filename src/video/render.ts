@@ -17,13 +17,20 @@ declare global {
   }
 }
 
+/** 描画に使うフォントの npm パッケージ(ページからは /fonts/<キー>/ で読む) */
+export const FONT_PACKAGES = {
+  serif: "@fontsource-variable/noto-serif-jp",
+  gothic: "@fontsource/zen-kaku-gothic-new",
+  mono: "@fontsource-variable/jetbrains-mono",
+} as const;
+
+/** パッケージのディレクトリ。見つからなければ例外 */
+export function packageDir(name: string): string {
+  return path.dirname(createRequire(import.meta.url).resolve(`${name}/package.json`));
+}
+
 function fontDirectories(): Record<string, string> {
-  const require = createRequire(import.meta.url);
-  return {
-    serif: path.dirname(require.resolve("@fontsource-variable/noto-serif-jp/package.json")),
-    gothic: path.dirname(require.resolve("@fontsource/zen-kaku-gothic-new/package.json")),
-    mono: path.dirname(require.resolve("@fontsource-variable/jetbrains-mono/package.json")),
-  };
+  return Object.fromEntries(Object.entries(FONT_PACKAGES).map(([key, name]) => [key, packageDir(name)]));
 }
 
 export interface RenderOptions {

@@ -72,6 +72,8 @@ jobs:
           dopagakix --version
           dopagakix install-skill -p "$RUNNER_TEMP/project"
           test -f "$RUNNER_TEMP/project/.claude/skills/video-report/SKILL.md"
+          # エラーの項目があれば終了コード 1 で失敗する
+          dopagakix doctor --no-voice --json -p "$RUNNER_TEMP/project"
       - name: 同梱のサンプルから動画を作る
         run: |
           out="$RUNNER_TEMP/sample/summary.mp4"
@@ -110,6 +112,8 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends ffmpeg
           npx playwright-core install --with-deps --only-shell chromium
+      - name: 環境を診断する(読み上げの合成を含む)
+        run: node dist/cli.js doctor --synth
       - name: 実エンジンを使うテスト
         run: npx vitest run test/tts.test.ts test/environment.test.ts
       - name: 読み上げ付きの動画を作る

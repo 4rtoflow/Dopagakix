@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { buildBrief, checkEnvironment, type EnvironmentItem } from "../src/brief.js";
+import { buildBrief } from "../src/brief.js";
+import type { CheckResult } from "../src/doctor.js";
 import type { SessionFacts } from "../src/facts.js";
 import { ZUNDAMON } from "../src/persona.js";
 
@@ -19,9 +20,9 @@ const facts: SessionFacts = {
   models: ["claude-opus-5-5"],
 };
 
-const ok: EnvironmentItem[] = [
-  { name: "読み上げ", status: "ok", detail: "VOICEVOX:ずんだもん(ノーマル、スタイル ID 3)" },
-  { name: "Chromium", status: "ok", detail: "/usr/bin/chromium" },
+const ok: CheckResult[] = [
+  { id: "voicevox", group: "読み上げ", name: "VOICEVOX ENGINE", status: "ok", detail: "0.25.2(http://127.0.0.1:50021)" },
+  { id: "chromium", group: "描画", name: "Chromium", status: "ok", detail: "/usr/bin/chromium(起動できます)" },
 ];
 
 const input = {
@@ -31,6 +32,7 @@ const input = {
   renderCommand: "dopagakix render dopagakix-out/x/report.json --session 4e4e81c0",
   digestCommand: "dopagakix digest --session 4e4e81c0 -o dopagakix-out/x/digest.md",
   seconds: 60,
+  voice: true,
   environment: ok,
   timeZone: "Asia/Tokyo",
 };
@@ -50,65 +52,25 @@ describe("buildBrief", () => {
     expect(text).not.toContain("不足しています");
   });
 
-  it("口調がなければ丁寧語、足りないものがあれば冒頭で知らせる", () => {
-    const text = buildBrief({ ...input, environment: [...ok, { name: "ffmpeg", status: "missing", detail: "なし" }] });
+  it("口調がなければ丁寧語、足りないものがあれば冒頭で知らせ、doctor へ案内する", () => {
+    const text = buildBrief({
+      ...input,
+      environment: [
+        ...ok,
+        { id: "ffmpeg", group: "描画", name: "ffmpeg", status: "error", detail: "ffmpeg を実行できません", fix: "ffmpeg を入れる" },
+        { id: "skill", group: "Claude Code", name: "スキル", status: "warn", detail: "1 行目\n2 行目" },
+      ],
+    });
     expect(text).toContain("## 読み上げ文の口調: 丁寧語");
-    expect(text).toMatch(/^# 動画レポートの準備\n\n\*\*描画に必要なものが不足しています\(ffmpeg\)/);
-    expect(text).toContain("- ffmpeg: [不足] なし");
-  });
-});
-
-describe("checkEnvironment", () => {
-  const engine = (async () =>
-    Response.json([{ name: "ずんだもん", speaker_uuid: "z", styles: [{ name: "ノーマル", id: 3 }] }])) as typeof fetch;
-  const unreachable = (async () => {
-    throw new TypeError("fetch failed");
-  }) as typeof fetch;
-  const base = { voicevoxUrl: "http://127.0.0.1:59999", chromium: "/nonexistent/chrome" };
-
-  it("VOICEVOX の状態で、読み上げの可否を判断する", async () => {
-    const voice = async (options: { voice: boolean; speaker: number; fetch: typeof fetch }) =>
-      (await checkEnvironment({ ...base, ...options })).find((item) => item.name === "読み上げ");
-    expect(await voice({ voice: true, speaker: 3, fetch: engine })).toMatchObject({
-      status: "ok",
-      detail: "ずんだもん(ノーマル、スタイル ID 3)。クレジット表記「VOICEVOX:ずんだもん」",
-    });
-    // 読み上げは必須。接続できなければ不足として扱い、対処を示す
-    expect(await voice({ voice: true, speaker: 3, fetch: unreachable })).toMatchObject({
-      status: "missing",
-      detail: expect.stringMatching(/接続できません。エンジンを起動してから[\s\S]*DOPAGAKIX_VOICEVOX_START/),
-    });
-    expect(await voice({ voice: true, speaker: 13, fetch: engine })).toMatchObject({ status: "missing" });
-    expect(await voice({ voice: false, speaker: 3, fetch: unreachable })).toMatchObject({ status: "ok", detail: expect.stringContaining("音声なし") });
+    expect(text).toMatch(/^# 動画レポートの準備\n\n\*\*描画に必要なものが不足しています\(ffmpeg\)。`dopagakix doctor` を実行し/);
+    expect(text).toContain("- ffmpeg: [不足] ffmpeg を実行できません");
+    // 注意は不足とは分けて示し、複数行は 1 行にまとめる
+    expect(text).toContain("- スキル: [注意] 1 行目 / 2 行目");
   });
 
-  it.skipIf(process.platform === "win32")("起動コマンドが設定されていれば、エンジンを起動してから確かめる", async () => {
-    let calls = 0;
-    const starting = (async (input: URL | RequestInfo, init?: RequestInit) =>
-      ++calls <= 2 ? unreachable(input, init) : engine(input, init)) as typeof fetch;
-    const started: string[] = [];
-    const items = await checkEnvironment({
-      ...base,
-      voice: true,
-      speaker: 3,
-      fetch: starting,
-      startCommand: "exit 0",
-      onStart: (command) => started.push(command),
-    });
-    expect(items.find((item) => item.name === "読み上げ")).toMatchObject({ status: "ok" });
-    expect(started).toEqual(["exit 0"]);
-
-    // 起動しても応答しなければ、その内容を不足として示す
-    const failed = await checkEnvironment({ ...base, voice: true, speaker: 3, fetch: unreachable, startCommand: "echo no-engine; exit 2" });
-    expect(failed.find((item) => item.name === "読み上げ")).toMatchObject({
-      status: "missing",
-      detail: expect.stringMatching(/終了コード 2[\s\S]*no-engine/),
-    });
-  });
-
-  it("指定した Chromium が無ければ不足として扱う", async () => {
-    const items = await checkEnvironment({ ...base, voice: false, speaker: 3 });
-    expect(items.find((item) => item.name === "Chromium")).toMatchObject({ status: "missing" });
-    expect(items.map((item) => item.name)).toEqual(["読み上げ", "Chromium", "ffmpeg"]);
+  it("字幕のみなら、読み上げなしであることを環境に示す", () => {
+    const text = buildBrief({ ...input, voice: false, environment: [ok[1]!] });
+    expect(text).toContain("- 読み上げ: なし(字幕のみで作成。動画の柱に「音声なし」と表示)");
+    expect(text).not.toContain("VOICEVOX ENGINE");
   });
 });

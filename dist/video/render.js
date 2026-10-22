@@ -7,13 +7,18 @@ import { resolveChromium } from "./browser.js";
 import { VIDEO_HEIGHT, VIDEO_WIDTH } from "./template.js";
 /** ページを配信する架空のオリジン。実際の通信は page.route で横取りする。 */
 const ORIGIN = "http://dopagakix.invalid";
+/** 描画に使うフォントの npm パッケージ(ページからは /fonts/<キー>/ で読む) */
+export const FONT_PACKAGES = {
+    serif: "@fontsource-variable/noto-serif-jp",
+    gothic: "@fontsource/zen-kaku-gothic-new",
+    mono: "@fontsource-variable/jetbrains-mono",
+};
+/** パッケージのディレクトリ。見つからなければ例外 */
+export function packageDir(name) {
+    return path.dirname(createRequire(import.meta.url).resolve(`${name}/package.json`));
+}
 function fontDirectories() {
-    const require = createRequire(import.meta.url);
-    return {
-        serif: path.dirname(require.resolve("@fontsource-variable/noto-serif-jp/package.json")),
-        gothic: path.dirname(require.resolve("@fontsource/zen-kaku-gothic-new/package.json")),
-        mono: path.dirname(require.resolve("@fontsource-variable/jetbrains-mono/package.json")),
-    };
+    return Object.fromEntries(Object.entries(FONT_PACKAGES).map(([key, name]) => [key, packageDir(name)]));
 }
 function even(n) {
     return Math.max(2, Math.round(n / 2) * 2);

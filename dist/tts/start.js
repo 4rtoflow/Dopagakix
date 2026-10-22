@@ -18,7 +18,7 @@ async function responds(baseUrl, fetchImpl) {
 function outputOf(file) {
     try {
         const text = readFileSync(file, "utf8").trim();
-        return text ? ` 出力(${file} の末尾): ${text.slice(-500).replace(/\s*\n\s*/g, " / ")}` : "";
+        return text ? `出力(${file} の末尾): ${text.slice(-500).replace(/\s*\n\s*/g, " / ")}` : "";
     }
     catch {
         return "";

@@ -85,6 +85,27 @@ dopagakix install-skill --user   # ~/.claude/skills/video-report に入れる(�
 
 Claude Code はスキルのディレクトリを監視しており、追加したスキルは実行中のセッションにも反映されます。ただし、セッション開始時に `.claude/skills` 自体が無かった場合は `/reload-skills` が必要です([Claude Code: Skills](https://code.claude.com/docs/en/skills))。`install-skill` はその場合に案内を表示します。
 
+### 3. 確かめる
+
+```bash
+cd <使うプロジェクト>
+dopagakix doctor           # 動画の作成に必要なものがそろっているかを確かめる
+dopagakix doctor --synth   # VOICEVOX で短い文を実際に合成して確かめる(時間がかかる)
+```
+
+`doctor` は次を確かめ、足りないものがあれば項目ごとに対処を表示して、終了コード 1 で終わります。何も変更しません(インストール、設定の書き換え、エンジンの起動、出力先の作成をしない)。
+
+| グループ | 確かめること |
+|----------|--------------|
+| 実行環境 | Node.js の版、dopagakix の版 |
+| 描画 | ffmpeg(libx264 と aac のエンコーダがあるか)、Chromium(起動できるか)、フォント |
+| 読み上げ | VOICEVOX ENGINE(接続と版)、話者(ID・クレジット表記・口調)、`--synth` なら実際の合成と所要時間 |
+| Claude Code | スキル(導入されているか、同梱版と同じか)、プロジェクトのセッションログ、実行中のセッション |
+| 出力 | 出力先(`dopagakix-out`)に書き込めるか |
+| 設定 | 有効な設定(環境変数)の値と出どころ |
+
+`--json` を付けると、項目ごとの `{ "id", "group", "status", "detail", "fix" }` を JSON の配列で出します(`status` は `ok` / `warn` / `error`)。`--no-voice` を付けると読み上げの確認を省きます。`prepare` の「環境」も同じ確認を使います。
+
 ### 更新
 
 ```bash
@@ -92,7 +113,7 @@ npm install -g github:4rtoflow/Dopagakix
 dopagakix install-skill --force   # スキルも更新する(手で編集していた場合は上書きされます)
 ```
 
-`install-skill` は、既存のスキルと内容が異なる場合は `--force` なしでは上書きしません。
+`install-skill` は、既存のスキルと内容が異なる場合は `--force` なしでは上書きしません。導入済みのスキルが同梱版と違う(古い可能性がある)ことは、`dopagakix doctor` で確かめられます。
 
 ## 使い方
 
@@ -108,7 +129,7 @@ Claude Code で作業を終えたら、「動画で報告して」「動画に�
 | `timeline.json` | シーンと字幕の時刻 |
 | `summary.mp4` | 完成した動画 |
 
-読み上げは必須です。VOICEVOX に接続できない場合、`prepare` と `render` はエラー(終了コード 1)で止まり、動画を作りません(字幕のみには切り替えません)。エージェントはスキルの手順に従って、エラーの内容を指示者に伝えて終えます。エンジンの起動方法は環境(Docker・製品版のアプリ・別のマシン)ごとに違うため、エージェントには起動させません。読み上げありで作った音声がほぼ無音(最大音量 -40 dBFS 未満)だった場合も、エラーにします。
+読み上げは必須です。VOICEVOX に接続できない場合、`prepare` と `render` はエラー(終了コード 1)で止まり、動画を作りません(字幕のみには切り替えません)。エージェントはスキルの手順に従って、エラーの内容と `dopagakix doctor` の結果を指示者に伝えて終えます。エンジンの起動方法は環境(Docker・製品版のアプリ・別のマシン)ごとに違うため、エージェントには起動させません。読み上げありで作った音声がほぼ無音(最大音量 -40 dBFS 未満)だった場合も、エラーにします。
 
 `DOPAGAKIX_VOICEVOX_START` に起動コマンドを設定しておくと、接続できないときに `dopagakix` がそのコマンドを実行し、エンジンが応答するまで最大 60 秒待ってから続けます。コマンドの出力は一時ディレクトリの `dopagakix-voicevox-start.log` に書き出し、失敗したときはその末尾を表示します。
 
@@ -195,6 +216,7 @@ Claude Code で作業を終えたら、「動画で報告して」「動画に�
 | `dopagakix sessions` | プロジェクトのセッションログを新しい順に表示する |
 | `dopagakix speakers` | VOICEVOX の話者とスタイル ID を表示する |
 | `dopagakix install-skill` | スキルを導入する |
+| `dopagakix doctor` | 動画の作成に必要なもの(描画・読み上げ・Claude Code との連携)がそろっているかを確かめ、足りないものと対処を表示する。何も変更しない |
 
 セッションログは、`--transcript <ファイル>` → `--session <ID の先頭>` → 実行中の Claude Code のセッション(Claude Code が Bash ツールのコマンドに渡す環境変数 `CLAUDE_CODE_SESSION_ID`。[Claude Code: Environment variables](https://code.claude.com/docs/en/env-vars))→ プロジェクトの最新のログ、の順に選びます。サブディレクトリで実行しても、git のルートまでさかのぼって探します。
 
@@ -255,8 +277,8 @@ GitHub Actions(`.github/workflows/ci.yml`)で、push のたびに次の 3 つを
 | ジョブ | 内容 |
 |--------|------|
 | テスト | Node.js 22・24・26 で型検査と `npm test`。Chromium と ffmpeg を入れ、描画の結合テストを省略させない |
-| git からの導入 | 利用者と同じく git から `npm install -g` で導入し、スキルの導入と同梱サンプルの描画を確かめる |
-| VOICEVOX との結合 | VOICEVOX ENGINE(Docker イメージ `cpu-0.25.2`)を起動し、実エンジンのテストと読み上げ付きの動画の作成を行う。作った動画は成果物として 7 日間保存する |
+| git からの導入 | 利用者と同じく git から `npm install -g` で導入し、スキルの導入、`doctor --no-voice --json`、同梱サンプルの描画を確かめる |
+| VOICEVOX との結合 | VOICEVOX ENGINE(Docker イメージ `cpu-0.25.2`)を起動し、`doctor --synth`、実エンジンのテスト、読み上げ付きの動画の作成を行う。作った動画は成果物として 7 日間保存する |
 
 結合テストは、必要な道具がない環境では省略されます。CI では環境変数 `DOPAGAKIX_TEST_REQUIRE_RENDER` / `DOPAGAKIX_TEST_REQUIRE_VOICEVOX` を `1` にして、準備に失敗したときに省略されたまま成功に見えないようにしています。
 
@@ -264,7 +286,8 @@ GitHub Actions(`.github/workflows/ci.yml`)で、push のたびに次の 3 つを
 src/
 ├── cli.ts                 コマンドの定義
 ├── pipeline.ts            ログの読み込み・台本の読み込み・描画のつなぎ込み
-├── brief.ts               prepare の表示内容と環境の確認
+├── brief.ts               prepare の表示内容
+├── doctor.ts              環境の確認(doctor と prepare の「環境」で共有)
 ├── skill.ts               スキルの導入
 ├── facts.ts               ログから集計する事実情報の型
 ├── persona.ts             キャラクターの口調

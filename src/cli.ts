@@ -4,7 +4,8 @@ import { mkdir, writeFile } from "node:fs/promises";
 import { createRequire } from "node:module";
 import path from "node:path";
 import { Command, InvalidArgumentError, Option } from "commander";
-import { buildBrief, checkEnvironment } from "./brief.js";
+import { buildBrief } from "./brief.js";
+import { exitCodeOf, formatReport, PREPARE_CHECKS, runChecks, type SettingEntry, toJson } from "./doctor.js";
 import { type Persona, personaMismatch, resolvePersona } from "./persona.js";
 import {
   assertVoiceAllowed,
@@ -169,7 +170,10 @@ const program = new Command()
   .name("dopagakix")
   .description("AI エージェントが書いた作業報告の台本から、指示者向けの縦型動画を作る")
   .version(version)
-  .hook("preAction", (_program, action) => assertVoiceAllowed(action.opts<{ voice?: boolean }>().voice));
+  // doctor は確かめるだけで動画を作らないため、--no-voice(読み上げの確認を省く)を許す
+  .hook("preAction", (_program, action) => {
+    if (action.name() !== "doctor") assertVoiceAllowed(action.opts<{ voice?: boolean }>().voice);
+  });
 
 type PrepareFlags = SessionFlags &
   VoiceFlags & { credit?: string; seconds: number; outDir: string; timezone?: string; chromium?: string };
@@ -193,7 +197,10 @@ withCreditOption(
     const loaded = await loadSession(locateOptions(flags), [outRoot]);
     log(`ログ: ${loaded.file}(${FOUND_BY[loaded.how]})`);
     // 口調は話者名から決めるため、エンジンを起動する場合は先に起動しておく
-    const environment = await checkEnvironment({ ...flags, startCommand: engineStart.command, onStart: engineStart.onStart });
+    const environment = await runChecks(
+      { ...flags, projectDir: flags.project, outDir: flags.outDir, startCommand: engineStart.command, onStart: engineStart.onStart },
+      PREPARE_CHECKS,
+    );
     const persona = await choosePersona(flags);
 
     await prepareOutputRoot(outRoot);
@@ -220,11 +227,12 @@ withCreditOption(
         digestCommand: commandLine(["dopagakix", "digest", ...session, ...timezone, "-o", displayPath(path.join(runDir, "digest.md"))]),
         persona,
         seconds: flags.seconds,
+        voice: flags.voice,
         environment,
         timeZone: flags.timezone,
       }),
     );
-    if (environment.some((item) => item.status === "missing")) process.exitCode = 1;
+    process.exitCode = exitCodeOf(environment);
   });
 
 type CheckFlags = SessionFlags & VoiceFlags & { seconds: number };
@@ -361,6 +369,43 @@ withSessionOptions(program.command("digest").description("セッションログ�
     } else {
       process.stdout.write(result.digest);
     }
+  });
+
+type DoctorFlags = VoiceFlags & { project: string; credit?: string; chromium?: string; synth?: boolean; json?: boolean };
+
+withCreditOption(
+  withVoiceOptions(
+    program
+      .command("doctor")
+      .description("動画の作成に必要なもの(描画・読み上げ・Claude Code との連携)がそろっているかを確かめ、足りないものと対処を表示する。何も変更しない"),
+  ),
+)
+  .option("-p, --project <dir>", "スキルとセッションログを確かめるプロジェクトのディレクトリ", process.cwd())
+  .option("--chromium <path>", "描画に使う Chromium の実行ファイル")
+  .option("--synth", "VOICEVOX で短い文を実際に合成して確かめる(時間がかかる)")
+  .option("--json", "結果を JSON で出す(エージェントと CI 向け)")
+  .action(async (flags: DoctorFlags, command: Command) => {
+    const source = (key: string): SettingEntry["source"] => {
+      const from = command.getOptionValueSource(key);
+      return from === "cli" ? "option" : from === "env" ? "env" : "default";
+    };
+    const fromEnv = (name: string, unset: string): SettingEntry =>
+      process.env[name] ? { name, value: process.env[name], source: "env" } : { name, source: "default", unset };
+    const settings: SettingEntry[] = [
+      { name: "VOICEVOX_URL", value: flags.voicevoxUrl, source: source("voicevoxUrl") },
+      { name: "DOPAGAKIX_SPEAKER", value: String(flags.speaker), source: source("speaker") },
+      { name: "DOPAGAKIX_PERSONA", value: flags.persona, source: source("persona") },
+      { name: "DOPAGAKIX_CREDIT", value: flags.credit, source: source("credit"), unset: "話者から決める" },
+      flags.chromium ? { name: "DOPAGAKIX_CHROMIUM", value: flags.chromium, source: "option" } : fromEnv("DOPAGAKIX_CHROMIUM", "自動で探す"),
+      fromEnv("DOPAGAKIX_VOICEVOX_START", "起動しない"),
+      fromEnv("DOPAGAKIX_REQUIRE_VOICE", "--no-voice を許す"),
+      fromEnv("TZ", "実行環境の設定"),
+      fromEnv("FFMPEG_PATH", "ffmpeg"),
+    ];
+    // 起動コマンドは渡さない(doctor はエンジンを起動しない)
+    const results = await runChecks({ ...flags, projectDir: flags.project, outDir: DEFAULT_OUT_DIR, settings });
+    process.stdout.write(flags.json ? toJson(results) : formatReport(results, { voice: flags.voice }));
+    process.exitCode = exitCodeOf(results);
   });
 
 program

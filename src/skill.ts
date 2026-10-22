@@ -41,22 +41,32 @@ export interface InstallSkillResult {
 }
 
 /**
+ * 導入済みのスキル(dir)のうち、同梱版と内容が違うファイル(無いものを含む)を返す。
+ * 同梱していないファイル(利用者が追加したもの)は比べない。
+ */
+export async function changedSkillFiles(dir: string, source: string = bundledSkillDir()): Promise<string[]> {
+  const files = await listFiles(source);
+  if (files.length === 0) throw new Error(`同梱のスキルが見つかりません: ${source}`);
+  const changed: string[] = [];
+  for (const file of files) {
+    const current = await readFile(path.join(dir, file)).catch(() => undefined);
+    if (!current || !current.equals(await readFile(path.join(source, file)))) changed.push(file);
+  }
+  return changed;
+}
+
+/**
  * スキルを導入する。既にあって内容が異なる場合は、利用者の編集を消さないよう --force を求める。
  * 同梱していないファイル(利用者が追加したもの)は上書き時も消さない。
  */
 export async function installSkill(options: InstallSkillOptions): Promise<InstallSkillResult> {
   const source = options.source ?? bundledSkillDir();
   const dir = path.join(options.target, SKILL_NAME);
-  const files = await listFiles(source);
-  if (files.length === 0) throw new Error(`同梱のスキルが見つかりません: ${source}`);
+  if ((await listFiles(source)).length === 0) throw new Error(`同梱のスキルが見つかりません: ${source}`);
 
   let status: InstallSkillResult["status"] = "installed";
   if (existsSync(dir)) {
-    const changed: string[] = [];
-    for (const file of files) {
-      const current = await readFile(path.join(dir, file)).catch(() => undefined);
-      if (!current || !current.equals(await readFile(path.join(source, file)))) changed.push(file);
-    }
+    const changed = await changedSkillFiles(dir, source);
     if (changed.length === 0) return { dir, status: "unchanged" };
     if (!options.force) {
       throw new Error(`${dir} に内容の異なるスキルがあります(${changed.join(", ")})。上書きする場合は --force を付けてください。`);
