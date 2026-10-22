@@ -2,10 +2,13 @@ import { parseWav } from "./wav.js";
 export const DEFAULT_VOICEVOX_URL = "http://127.0.0.1:50021";
 /** ずんだもん(ノーマル) */
 export const DEFAULT_SPEAKER = 3;
+/** エンジンに接続できないときの対処(指示者に伝える内容) */
+export const ENGINE_HELP = "エンジンを起動してから、もう一度実行してください(README の手順で作ったコンテナなら docker start voicevox)。" +
+    "別の場所のエンジンを使う場合は VOICEVOX_URL を、接続できないときに自動で起動させる場合は DOPAGAKIX_VOICEVOX_START を設定します。";
 export class VoicevoxError extends Error {
     name = "VoicevoxError";
 }
-/** エンジンに接続できない(起動していない、URL が違う)。字幕のみに切り替える判断に使う。 */
+/** エンジンに接続できない(起動していない、URL が違う)。起動コマンドを試すかどうかの判断に使う。 */
 export class VoicevoxConnectionError extends VoicevoxError {
     name = "VoicevoxConnectionError";
 }
@@ -23,7 +26,7 @@ export class VoicevoxClient {
             response = await this.fetchImpl(new URL(path, this.baseUrl), { ...init, signal: AbortSignal.timeout(120_000) });
         }
         catch (error) {
-            throw new VoicevoxConnectionError(`VOICEVOX エンジン(${this.baseUrl})に接続できません。エンジンを起動するか、--no-voice を指定してください。`, { cause: error });
+            throw new VoicevoxConnectionError(`VOICEVOX エンジン(${this.baseUrl})に接続できません。${ENGINE_HELP}`, { cause: error });
         }
         if (!response.ok) {
             const body = await response.text().catch(() => "");
@@ -71,11 +74,11 @@ export function creditFor(speakerName) {
 }
 export class VoicevoxSynthesizer {
     client;
-    speaker;
+    voice;
     credit;
-    constructor(client, speaker, credit) {
+    constructor(client, voice, credit) {
         this.client = client;
-        this.speaker = speaker;
+        this.voice = voice;
         this.credit = credit;
     }
     /** エンジンへの接続と話者の存在を確かめてから作る。 */
@@ -84,18 +87,19 @@ export class VoicevoxSynthesizer {
         const speaker = options.speaker ?? DEFAULT_SPEAKER;
         const speakers = await client.speakers();
         const owner = speakers.find((s) => s.styles.some((style) => style.id === speaker));
-        if (!owner) {
+        const style = owner?.styles.find((s) => s.id === speaker);
+        if (!owner || !style) {
             throw new VoicevoxError(`話者 ID ${speaker} はこのエンジンにありません。\`dopagakix speakers\` で一覧を確認してください。`);
         }
         await client.initializeSpeaker(speaker);
-        return new VoicevoxSynthesizer(client, speaker, options.credit ?? creditFor(owner.name));
+        return new VoicevoxSynthesizer(client, { speaker, name: owner.name, style: style.name }, options.credit ?? creditFor(owner.name));
     }
     async synthesize(text, speed) {
-        const query = await this.client.audioQuery(text, this.speaker);
+        const query = await this.client.audioQuery(text, this.voice.speaker);
         query.speedScale = speed;
         // 文頭・文末の無音は字幕の切り替えに合わせて自前で入れるため短くする
         query.prePhonemeLength = 0.05;
         query.postPhonemeLength = 0.05;
-        return parseWav(await this.client.synthesis(query, this.speaker));
+        return parseWav(await this.client.synthesis(query, this.voice.speaker));
     }
 }

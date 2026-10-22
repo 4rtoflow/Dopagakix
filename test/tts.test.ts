@@ -1,8 +1,13 @@
-import { describe, expect, it } from "vitest";
+import { existsSync } from "node:fs";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { SilentSynthesizer } from "../src/tts/silent.js";
+import { startVoicevox } from "../src/tts/start.js";
 import type { Synthesizer } from "../src/tts/types.js";
 import { creditFor, VoicevoxError, VoicevoxSynthesizer } from "../src/tts/voicevox.js";
-import { durationOf, encodeWav, mixInto, parseWav, silence } from "../src/tts/wav.js";
+import { durationOf, encodeWav, mixInto, parseWav, peakDbfs, silence } from "../src/tts/wav.js";
 import { voicevoxAvailable, voicevoxUrl } from "./support.js";
 
 describe("wav", () => {
@@ -24,6 +29,13 @@ describe("wav", () => {
 
   it("形式の違う音声は合成しない", () => {
     expect(() => mixInto(silence(1, 24_000), silence(1, 48_000), 0)).toThrow(/形式が一致しません/);
+  });
+
+  it("最大音量を dBFS で求める", () => {
+    expect(peakDbfs(silence(1, 10))).toBe(-Infinity);
+    expect(peakDbfs({ sampleRate: 10, channels: 1, samples: Int16Array.from([0, -16384, 100]) })).toBeCloseTo(-6.02, 2);
+    // -40 dBFS は 32768 の 1/100
+    expect(peakDbfs({ sampleRate: 10, channels: 1, samples: Int16Array.from([328]) })).toBeCloseTo(-40, 1);
   });
 });
 
@@ -73,6 +85,7 @@ describe("VoicevoxSynthesizer", () => {
     const { requests, fetchImpl } = fakeEngine();
     const synth = await VoicevoxSynthesizer.create({ speaker: 3, fetch: fetchImpl });
     expect(synth.credit).toBe("VOICEVOX:ずんだもん");
+    expect(synth.voice).toEqual({ speaker: 3, name: "ずんだもん", style: "ノーマル" });
 
     const pcm = await synth.synthesize("TypeScriptで実装しました。", 1.2);
     expect(durationOf(pcm)).toBeCloseTo(0.5, 3);
@@ -102,6 +115,53 @@ describe("VoicevoxSynthesizer", () => {
       throw new TypeError("fetch failed");
     }) as typeof fetch;
     await expect(VoicevoxSynthesizer.create({ fetch: refused })).rejects.toThrow(VoicevoxError);
+  });
+});
+
+// 起動コマンドはシェルで実行するため、POSIX のシェルがある環境で確かめる
+describe.skipIf(process.platform === "win32")("startVoicevox", () => {
+  let dir: string;
+  beforeAll(async () => {
+    dir = await mkdtemp(path.join(os.tmpdir(), "dopagakix-start-"));
+  });
+  afterAll(async () => {
+    await rm(dir, { recursive: true, force: true });
+  });
+
+  const unreachable = (async () => {
+    throw new TypeError("fetch failed");
+  }) as typeof fetch;
+  /** n 回目の問い合わせから応答するエンジン */
+  const respondsFrom = (n: number) => {
+    let calls = 0;
+    return (async () => (++calls >= n ? Response.json("0.25.2") : unreachable("x"))) as typeof fetch;
+  };
+  const baseUrl = "http://127.0.0.1:59999";
+
+  it("コマンドを実行し、エンジンが応答するまで待つ", async () => {
+    const marker = path.join(dir, "started");
+    await startVoicevox({ command: `echo started > '${marker}'`, baseUrl, fetch: respondsFrom(3), intervalMs: 10, logFile: path.join(dir, "a.log") });
+    expect(await readFile(marker, "utf8")).toBe("started\n");
+  });
+
+  it("エンジンそのもののような終わらないコマンドでも、応答すれば続ける", async () => {
+    await expect(
+      startVoicevox({ command: "sleep 5", baseUrl, fetch: respondsFrom(2), intervalMs: 10, logFile: path.join(dir, "b.log") }),
+    ).resolves.toBeUndefined();
+  });
+
+  it("コマンドが失敗したら、終了コードと出力を示してエラーにする", async () => {
+    const logFile = path.join(dir, "c.log");
+    await expect(
+      startVoicevox({ command: "echo no such container >&2; exit 3", baseUrl, fetch: unreachable, intervalMs: 10, logFile }),
+    ).rejects.toThrow(/DOPAGAKIX_VOICEVOX_START[\s\S]*終了コード 3[\s\S]*秒待機[\s\S]*no such container/);
+    expect(existsSync(logFile)).toBe(true);
+  });
+
+  it("応答しないまま時間切れになったら、待った時間を示してエラーにする", async () => {
+    await expect(
+      startVoicevox({ command: "exit 0", baseUrl, fetch: unreachable, timeoutMs: 200, intervalMs: 20, logFile: path.join(dir, "d.log") }),
+    ).rejects.toThrow(/実行して \d+\.\d 秒待ちましたが、エンジン\(http:\/\/127\.0\.0\.1:59999\)が応答しません/);
   });
 });
 

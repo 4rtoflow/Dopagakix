@@ -52,7 +52,9 @@ Claude Code に「動画で報告して」と頼むと、エージェントが�
 | Node.js 22 以上 | `dopagakix` の実行 | |
 | ffmpeg | mp4 への書き出し | libx264 と aac が使えるもの |
 | Chromium | 描画 | `npx playwright-core install --only-shell chromium` で導入できます |
-| VOICEVOX ENGINE | 読み上げ音声 | なくても動きます(字幕のみの動画になります) |
+| VOICEVOX ENGINE | 読み上げ音声 | 必須です。字幕のみの動画は、`--no-voice` を明示した場合だけ作れます |
+
+VOICEVOX ENGINE のない環境(クラウドのセッションなど)では、`--no-voice` を明示しない限り動画を作れません。読み上げ付きで作るには、その環境でエンジンを起動するか、到達できるエンジンを `VOICEVOX_URL` で指定してください。
 
 ## 導入
 
@@ -101,12 +103,14 @@ Claude Code で作業を終えたら、「動画で報告して」「動画に�
 | ファイル | 内容 |
 |----------|------|
 | `report.json` | エージェントが書いた台本 |
-| `script.json` | 描画に使った台本と数値の記録。`dopagakix render <この script.json>` で同じ内容のまま作り直せます(話者を変える、など) |
+| `script.json` | 描画に使った台本と数値、読み上げの有無と話者の記録。`dopagakix render <この script.json>` で同じ内容のまま作り直せます(話者を変える、など) |
 | `narration.wav` | 読み上げ音声 |
 | `timeline.json` | シーンと字幕の時刻 |
 | `summary.mp4` | 完成した動画 |
 
-VOICEVOX に接続できない場合は、作業を止めずに字幕のみで作り、その旨を表示します。あとでエンジンを起動して `script.json` を `render` すれば、読み上げ付きに作り直せます。
+読み上げは必須です。VOICEVOX に接続できない場合、`prepare` と `render` はエラー(終了コード 1)で止まり、動画を作りません(字幕のみには切り替えません)。エージェントはスキルの手順に従って、エラーの内容を指示者に伝えて終えます。エンジンの起動方法は環境(Docker・製品版のアプリ・別のマシン)ごとに違うため、エージェントには起動させません。読み上げありで作った音声がほぼ無音(最大音量 -40 dBFS 未満)だった場合も、エラーにします。
+
+`DOPAGAKIX_VOICEVOX_START` に起動コマンドを設定しておくと、接続できないときに `dopagakix` がそのコマンドを実行し、エンジンが応答するまで最大 60 秒待ってから続けます。コマンドの出力は一時ディレクトリの `dopagakix-voicevox-start.log` に書き出し、失敗したときはその末尾を表示します。
 
 ### 設定
 
@@ -119,6 +123,8 @@ VOICEVOX に接続できない場合は、作業を止めずに字幕のみで�
 | `VOICEVOX_URL` | `http://127.0.0.1:50021` | VOICEVOX エンジンの URL |
 | `TZ` | 実行環境の設定 | 画面の日時表示のタイムゾーン(例: `Asia/Tokyo`) |
 | `DOPAGAKIX_CREDIT` | 話者から決める | 動画に表示する音声のクレジット表記。通常は指定不要([VOICEVOX とキャラクターの規約](#voicevox-とキャラクターの規約)) |
+| `DOPAGAKIX_VOICEVOX_START` | なし | VOICEVOX に接続できないときに実行する、エンジンの起動コマンド(例: `docker start voicevox`)。応答するまで最大 60 秒待ちます |
+| `DOPAGAKIX_REQUIRE_VOICE` | なし | `1` にすると `--no-voice`(字幕のみ)をエラーにします |
 | `DOPAGAKIX_CHROMIUM` | 自動探索 | 描画に使う Chromium の実行ファイル |
 | `FFMPEG_PATH` | `ffmpeg` | ffmpeg の実行ファイル |
 
@@ -132,6 +138,8 @@ VOICEVOX に接続できない場合は、作業を止めずに字幕のみで�
 ```
 
 例の `2` は四国めたん(ノーマル)です。話者によっては、企業が関わる利用に事前確認が必要です([VOICEVOX とキャラクターの規約](#voicevox-とキャラクターの規約))。
+
+指示者が `env` に `"DOPAGAKIX_REQUIRE_VOICE": "1"` を書いておけば、エージェントは字幕のみの動画を作れなくなります。
 
 ### キャラクターの口調
 
@@ -195,7 +203,7 @@ VOICEVOX に接続できない場合は、作業を止めずに字幕のみで�
 | オプション | 既定値 | 説明 |
 |------------|--------|------|
 | `--seconds <n>` | `60` | 動画の長さの目安。読み上げ文の文字数の目安に使い、`render` では 1.25 倍を超えると話速を最大 1.45 まで上げて収めます |
-| `--no-voice` | (音声あり) | 字幕のみで作ります |
+| `--no-voice` | (音声あり) | 字幕のみで作ります。動画の柱に「音声なし」と表示し、`script.json` にも記録します。`DOPAGAKIX_REQUIRE_VOICE=1` のときはエラー |
 | `--speaker <id>` / `--persona <name>` / `--voicevox-url <url>` | 上の表 | 環境変数より優先されます |
 | `--credit <text>` | 話者から決める | 音声のクレジット表記(`prepare` / `render`)。環境変数 `DOPAGAKIX_CREDIT` でも可 |
 | `--speed <x>` | `1.25` | 話速(`render` のみ。ずんだもんの実測で約 7.3 文字/秒) |

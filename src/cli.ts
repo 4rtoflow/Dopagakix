@@ -7,6 +7,7 @@ import { Command, InvalidArgumentError, Option } from "commander";
 import { buildBrief, checkEnvironment } from "./brief.js";
 import { type Persona, personaMismatch, resolvePersona } from "./persona.js";
 import {
+  assertVoiceAllowed,
   createSynthesizer,
   DEFAULT_OUT_DIR,
   digestSession,
@@ -21,6 +22,7 @@ import { installSkill, SKILL_NAME, skillsDir } from "./skill.js";
 import { DEFAULT_MAX_DIGEST_CHARS } from "./transcript/digest.js";
 import { type LocatedTranscript, type LocateOptions, listTranscripts } from "./transcript/locate.js";
 import { readTranscript } from "./transcript/parse.js";
+import { START_TIMEOUT_MS } from "./tts/start.js";
 import { DEFAULT_SPEAKER, DEFAULT_VOICEVOX_URL, VoicevoxClient } from "./tts/voicevox.js";
 import { log, progress } from "./util/log.js";
 import { formatDateTime, formatStamp } from "./util/time.js";
@@ -79,7 +81,7 @@ function withSessionOptions(command: Command): Command {
 
 function withVoiceOptions(command: Command): Command {
   return command
-    .option("--no-voice", "読み上げなし(字幕のみ)で作る。VOICEVOX は不要")
+    .option("--no-voice", "読み上げなし(字幕のみ)で作る。VOICEVOX は不要。動画の柱に「音声なし」と出る")
     .addOption(
       new Option("--speaker <id>", "VOICEVOX の話者(スタイル)ID。`dopagakix speakers` で一覧")
         .argParser(nonNegativeInteger)
@@ -129,6 +131,13 @@ async function choosePersona(flags: VoiceFlags): Promise<Persona | undefined> {
   return resolvePersona({ option: flags.persona, speaker: flags.speaker, voice: flags.voice, voicevoxUrl: flags.voicevoxUrl });
 }
 
+/** VOICEVOX に接続できないときに実行する、エンジンの起動コマンド */
+const engineStart = {
+  command: process.env.DOPAGAKIX_VOICEVOX_START || undefined,
+  onStart: (command: string) =>
+    log(`VOICEVOX エンジンに接続できないため、起動します(応答を最大 ${START_TIMEOUT_MS / 1000} 秒待ちます): ${command}`),
+};
+
 /** コマンドの表示用に、cwd の中なら相対パスにする */
 function displayPath(file: string): string {
   const relative = path.relative(process.cwd(), file);
@@ -159,7 +168,8 @@ function explicitArgs(command: Command, flags: object, keys: string[]): string[]
 const program = new Command()
   .name("dopagakix")
   .description("AI エージェントが書いた作業報告の台本から、指示者向けの縦型動画を作る")
-  .version(version);
+  .version(version)
+  .hook("preAction", (_program, action) => assertVoiceAllowed(action.opts<{ voice?: boolean }>().voice));
 
 type PrepareFlags = SessionFlags &
   VoiceFlags & { credit?: string; seconds: number; outDir: string; timezone?: string; chromium?: string };
@@ -182,8 +192,9 @@ withCreditOption(
     const outRoot = path.resolve(flags.outDir);
     const loaded = await loadSession(locateOptions(flags), [outRoot]);
     log(`ログ: ${loaded.file}(${FOUND_BY[loaded.how]})`);
+    // 口調は話者名から決めるため、エンジンを起動する場合は先に起動しておく
+    const environment = await checkEnvironment({ ...flags, startCommand: engineStart.command, onStart: engineStart.onStart });
     const persona = await choosePersona(flags);
-    const environment = await checkEnvironment(flags);
 
     await prepareOutputRoot(outRoot);
     const runDir = path.join(outRoot, `${formatStamp(new Date(), flags.timezone)}-${loaded.sessionId.slice(0, 8)}`);
@@ -284,6 +295,10 @@ withCreditOption(
       log(`ログ: ${loaded.file}(${FOUND_BY[loaded.how]})`);
     }
 
+    // 読み上げありで VOICEVOX に接続できなければ、ここで止める(字幕のみには切り替えない)
+    const synth = await createSynthesizer({ ...flags, startCommand: engineStart.command, onStart: engineStart.onStart });
+    if (!flags.voice) log("読み上げ: なし(字幕のみ。動画の柱に「音声なし」と表示します)");
+
     const persona = await choosePersona(flags);
     log(`口調: ${persona?.name ?? "丁寧語"}`);
     for (const issue of checkScript(report.raw, { persona, facts, seconds: flags.seconds }).issues) {
@@ -291,9 +306,6 @@ withCreditOption(
     }
     const mismatch = flags.voice ? personaMismatch(report.persona, flags.speaker) : undefined;
     if (mismatch) log(`注意: ${mismatch}`);
-
-    const { synth, fallback } = await createSynthesizer(flags);
-    if (fallback) log(`注意: ${fallback}`);
 
     const outFile = path.resolve(flags.out ?? path.join(path.dirname(reportPath), "summary.mp4"));
     // narration.wav・timeline.json・script.json は動画と同じ場所に置く
@@ -316,7 +328,7 @@ withCreditOption(
         fps: flags.fps,
         chromiumPath: flags.chromium,
         timeZone: flags.timezone,
-        onSpeechProgress: progress(flags.voice && !fallback ? "音声合成" : "字幕の時間割り当て"),
+        onSpeechProgress: progress(flags.voice ? "音声合成" : "字幕の時間割り当て"),
         onFrameProgress: progress("描画"),
       },
     );
@@ -324,7 +336,6 @@ withCreditOption(
       `完了: ${result.outFile}(${result.duration.toFixed(1)} 秒、話速 ${result.speed}` +
         `、撮影 ${result.stats.captured}/${result.stats.frames} フレーム)`,
     );
-    if (fallback) log("注意: 読み上げなし(字幕のみ)で作成しました。");
     if (result.credit) log(`クレジット表記: ${result.credit}(VOICEVOX の利用規約により必要です)`);
     process.stdout.write(`${result.outFile}\n`);
   });
