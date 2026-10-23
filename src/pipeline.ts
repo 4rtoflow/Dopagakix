@@ -1,5 +1,6 @@
 import { existsSync } from "node:fs";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
+import os from "node:os";
 import path from "node:path";
 import { z } from "zod";
 import type { SessionFacts } from "./facts.js";
@@ -162,6 +163,42 @@ export async function prepareOutputRoot(dir: string): Promise<void> {
   await mkdir(dir, { recursive: true });
   const ignore = path.join(dir, ".gitignore");
   if (!existsSync(ignore)) await writeFile(ignore, "# dopagakix が作成。動画と作業ファイルを git の管理対象から外す\n*\n");
+}
+
+/** 保存先に置く動画の名前に使うタイトルの文字数。ファイル名の上限(多くのファイルシステムで 255 バイト)に収める */
+const TITLE_CHARS_IN_FILE_NAME = 40;
+
+export interface RenderPathOptions {
+  /** 台本のパス */
+  report: string;
+  /** 台本のタイトル(保存先に置く動画の名前に使う) */
+  title: string;
+  /** 動画の出力先(-o)。作業ファイルも同じ場所に置く */
+  out?: string;
+  /** 完成した動画だけを置くフォルダ */
+  videoDir?: string;
+}
+
+/**
+ * 動画と作業ファイル(narration.wav・timeline.json・script.json)の置き場所を決める。
+ * -o を最優先し、保存先の指定があれば動画だけを「台本のフォルダ名-タイトル.mp4」としてそこに置く。
+ */
+export function resolveRenderPaths(options: RenderPathOptions): { outFile: string; workDir: string } {
+  if (options.out) {
+    const outFile = path.resolve(options.out);
+    return { outFile, workDir: path.dirname(outFile) };
+  }
+  const workDir = path.dirname(path.resolve(options.report));
+  if (!options.videoDir) return { outFile: path.join(workDir, "summary.mp4"), workDir };
+
+  // 設定ファイル(.claude/settings.json の env など)に書いた値はシェルを通らず、~ が展開されない
+  const videoDir = path.resolve(options.videoDir.replace(/^~(?=$|[\\/])/, () => os.homedir()));
+  const title = Array.from(options.title.replace(/[\\/:*?"<>|\p{Cc}]/gu, "_"))
+    .slice(0, TITLE_CHARS_IN_FILE_NAME)
+    .join("")
+    .trim();
+  const name = [path.basename(workDir), title].filter(Boolean).join("-");
+  return { outFile: path.join(videoDir, `${name}.mp4`), workDir };
 }
 
 export interface RenderInput {

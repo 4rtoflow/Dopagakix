@@ -15,6 +15,7 @@ import {
   loadSession,
   prepareOutputRoot,
   renderReport,
+  resolveRenderPaths,
 } from "./pipeline.js";
 import { checkScript } from "./script/check.js";
 import { STATUS_LABELS } from "./script/schema.js";
@@ -105,6 +106,15 @@ function withCreditOption(command: Command): Command {
   );
 }
 
+function withVideoDirOption(command: Command): Command {
+  return command.addOption(
+    new Option(
+      "--video-dir <dir>",
+      "完成した動画だけを置くフォルダ。動画の名前は「台本のフォルダ名-タイトル.mp4」になり、作業ファイルは台本と同じ場所に残す",
+    ).env("DOPAGAKIX_VIDEO_DIR"),
+  );
+}
+
 function withSecondsOption(command: Command): Command {
   return command.option("--seconds <n>", "動画の長さの目安(秒)。読み上げ文の文字数の目安と、話速の調整に使う", positiveNumber, DEFAULT_SECONDS);
 }
@@ -172,15 +182,17 @@ const program = new Command()
   .hook("preAction", (_program, action) => assertVoiceAllowed(action.opts<{ voice?: boolean }>().voice));
 
 type PrepareFlags = SessionFlags &
-  VoiceFlags & { credit?: string; seconds: number; outDir: string; timezone?: string; chromium?: string };
+  VoiceFlags & { credit?: string; videoDir?: string; seconds: number; outDir: string; timezone?: string; chromium?: string };
 
-withCreditOption(
-  withSecondsOption(
-    withVoiceOptions(
-      withSessionOptions(
-        program
-          .command("prepare")
-          .description("動画レポートの準備。出力先を作り、台本を書くのに必要な情報(画面に出る数値・口調・長さ・環境)を表示する"),
+withVideoDirOption(
+  withCreditOption(
+    withSecondsOption(
+      withVoiceOptions(
+        withSessionOptions(
+          program
+            .command("prepare")
+            .description("動画レポートの準備。出力先を作り、台本を書くのに必要な情報(画面に出る数値・口調・長さ・環境)を表示する"),
+        ),
       ),
     ),
   ),
@@ -215,7 +227,7 @@ withCreditOption(
           report,
           ...shared,
           ...timezone,
-          ...explicitArgs(command, flags, ["credit", "chromium"]),
+          ...explicitArgs(command, flags, ["credit", "chromium", "videoDir"]),
         ]),
         digestCommand: commandLine(["dopagakix", "digest", ...session, ...timezone, "-o", displayPath(path.join(runDir, "digest.md"))]),
         persona,
@@ -266,23 +278,25 @@ withSecondsOption(
 
 type RenderCommandFlags = SessionFlags &
   VoiceFlags &
-  RenderFlags & { credit?: string; out?: string; seconds: number; timezone?: string };
+  RenderFlags & { credit?: string; out?: string; videoDir?: string; seconds: number; timezone?: string };
 
-withCreditOption(
-  withRenderOptions(
-    withSecondsOption(
-      withVoiceOptions(
-        withSessionOptions(
-          program
-            .command("render")
-            .description("台本から動画を作る。画面の数値はセッションログから集計する")
-            .argument("<report>", "台本(report.json)、または描画済みの script.json(記録された数値で描画し直す)"),
+withVideoDirOption(
+  withCreditOption(
+    withRenderOptions(
+      withSecondsOption(
+        withVoiceOptions(
+          withSessionOptions(
+            program
+              .command("render")
+              .description("台本から動画を作る。画面の数値はセッションログから集計する")
+              .argument("<report>", "台本(report.json)、または描画済みの script.json(記録された数値で描画し直す)"),
+          ),
         ),
       ),
     ),
   ),
 )
-  .option("-o, --out <file>", "動画の出力先(既定: 台本と同じ場所の summary.mp4)")
+  .option("-o, --out <file>", "動画の出力先。作業ファイルも同じ場所に置き、--video-dir より優先する(既定: 台本と同じ場所の summary.mp4)")
   .option("--timezone <tz>", "時刻表示のタイムゾーン(例: Asia/Tokyo)。省略時は実行環境の設定")
   .action(async (reportPath: string, flags: RenderCommandFlags) => {
     const report = await loadReport(reportPath);
@@ -307,10 +321,14 @@ withCreditOption(
     const mismatch = flags.voice ? personaMismatch(report.persona, flags.speaker) : undefined;
     if (mismatch) log(`注意: ${mismatch}`);
 
-    const outFile = path.resolve(flags.out ?? path.join(path.dirname(reportPath), "summary.mp4"));
-    // narration.wav・timeline.json・script.json は動画と同じ場所に置く
-    const workDir = path.dirname(outFile);
+    const { outFile, workDir } = resolveRenderPaths({
+      report: reportPath,
+      title: report.script.title,
+      out: flags.out,
+      videoDir: flags.videoDir,
+    });
     await mkdir(workDir, { recursive: true });
+    await mkdir(path.dirname(outFile), { recursive: true });
     const result = await renderReport(
       {
         script: report.script,
